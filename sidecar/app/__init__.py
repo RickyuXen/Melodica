@@ -1,0 +1,1 @@
+# Melodica language sidecar package
