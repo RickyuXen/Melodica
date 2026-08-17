@@ -8,14 +8,14 @@ Downloadable desktop music player that surfaces dual-language, line-aligned lyri
 |------|------|
 | `src/` | React + TypeScript UI (Tauri webview) |
 | `src-tauri/` | Rust core — IPC bridge today; playback/storage later |
-| `sidecar/` | Python FastAPI language service (stub; not wired yet) |
+| `sidecar/` | Python FastAPI language service (Whisper ASR) |
 
 ## Prerequisites
 
 - Node.js 18+
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload (`link.exe` must be on PATH)
-- Python 3.10+ (only for the sidecar)
+- Python 3.10+ (required for ASR when a file has no embedded lyrics)
 
 ## Run the desktop app
 
@@ -24,7 +24,14 @@ npm install
 npm run tauri:dev
 ```
 
-This opens the Melodica window and exercises the UI ↔ Rust `app_info` command.
+For transcription fallback (no embedded lyrics), also start the sidecar in another terminal:
+
+```bash
+npm run sidecar:install
+npm run sidecar:dev
+```
+
+First sidecar start downloads the Whisper `base` model. Uploads without embedded lyrics call `POST /transcribe` and store lines with `source=asr`.
 
 Build installers with:
 
@@ -32,19 +39,15 @@ Build installers with:
 npm run tauri:build
 ```
 
-## Sidecar (optional, separate)
+## Sidecar
 
-Not connected to the app yet — scaffold only.
+Bound to `127.0.0.1:8765`.
 
-```bash
-npm run sidecar:install
-npm run sidecar:dev
-```
-
-Health check: http://127.0.0.1:8765/health
+- `GET /health`
+- `POST /transcribe` — `{ "file_path": "..." }` → lyric segments
 
 ## Current scope
 
-Implemented: Tauri window, React shell, Rust `app_info` IPC, Python `/health` stub.
+Implemented: Tauri window, library upload, SQLite tracks/lyrics, embedded lyrics via lofty, ASR fallback via faster-whisper.
 
-Next (per plan.md): folder import, play/pause/seek/volume, tag reading.
+Next (per plan.md): LRCLIB lookup, playback controls, translation.
