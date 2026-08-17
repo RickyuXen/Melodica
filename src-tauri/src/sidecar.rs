@@ -20,6 +20,23 @@ struct TranscribeLine {
 #[derive(Deserialize)]
 struct TranscribeResponse {
     lines: Vec<TranscribeLine>,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DetectLanguageRequest {
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct DetectLanguageResponse {
+    language: String,
+}
+
+pub struct TranscribeResult {
+    pub lines: Vec<(Option<i64>, String)>,
+    pub language: Option<String>,
 }
 
 fn agent() -> Agent {
@@ -31,7 +48,7 @@ fn agent() -> Agent {
 }
 
 /// Ask the sidecar to transcribe a local audio file into lyric lines.
-pub fn transcribe(file_path: &str) -> Result<Vec<(Option<i64>, String)>, String> {
+pub fn transcribe(file_path: &str) -> Result<TranscribeResult, String> {
     let request = TranscribeRequest {
         file_path: file_path.to_string(),
     };
@@ -40,9 +57,7 @@ pub fn transcribe(file_path: &str) -> Result<Vec<(Option<i64>, String)>, String>
         .post(&format!("{BASE_URL}/transcribe"))
         .send_json(&request)
         .map_err(|e| {
-            format!(
-                "Transcription failed (is `npm run sidecar:dev` running?): {e}"
-            )
+            format!("Transcription failed (is `npm run sidecar:dev` running?): {e}")
         })?;
 
     let body: TranscribeResponse = response
@@ -50,10 +65,43 @@ pub fn transcribe(file_path: &str) -> Result<Vec<(Option<i64>, String)>, String>
         .read_json()
         .map_err(|e| format!("Invalid sidecar response: {e}"))?;
 
-    Ok(body
-        .lines
-        .into_iter()
-        .map(|line| (line.timestamp_ms, line.text.trim().to_string()))
-        .filter(|(_, text)| !text.is_empty())
-        .collect())
+    Ok(TranscribeResult {
+        lines: body
+            .lines
+            .into_iter()
+            .map(|line| (line.timestamp_ms, line.text.trim().to_string()))
+            .filter(|(_, text)| !text.is_empty())
+            .collect(),
+        language: body.language.filter(|code| !code.trim().is_empty()),
+    })
+}
+
+/// Classify language from lyrics text via the sidecar.
+pub fn detect_language(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("no text for language detection".to_string());
+    }
+
+    let request = DetectLanguageRequest {
+        text: trimmed.to_string(),
+    };
+
+    let response = agent()
+        .post(&format!("{BASE_URL}/detect-language"))
+        .send_json(&request)
+        .map_err(|e| {
+            format!("Language detection failed (is `npm run sidecar:dev` running?): {e}")
+        })?;
+
+    let body: DetectLanguageResponse = response
+        .into_body()
+        .read_json()
+        .map_err(|e| format!("Invalid sidecar response: {e}"))?;
+
+    let language = body.language.trim().to_lowercase();
+    if language.is_empty() {
+        return Err("empty language code from sidecar".to_string());
+    }
+    Ok(language)
 }

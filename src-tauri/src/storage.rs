@@ -160,6 +160,24 @@ pub fn replace_lyrics(
     Ok(())
 }
 
+pub fn set_language_code(
+    conn: &Connection,
+    track_id: i64,
+    language_code: &str,
+) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE tracks SET language_code = ?1 WHERE id = ?2",
+            params![language_code, track_id],
+        )
+        .map_err(|e| format!("update language: {e}"))?;
+
+    if updated == 0 {
+        return Err(format!("track not found: {track_id}"));
+    }
+    Ok(())
+}
+
 pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
     let mut stmt = conn
         .prepare(

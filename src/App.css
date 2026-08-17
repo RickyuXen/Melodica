@@ -128,6 +128,28 @@ body {
   line-height: 1.35;
 }
 
+.lang-tag,
+.processing-tag {
+  display: inline-block;
+  margin-left: 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.lang-tag {
+  color: #3d3a34;
+  border: 1px solid #d2ccc0;
+  background: #f3f0eb;
+  padding: 0.1rem 0.4rem;
+}
+
+.processing-tag {
+  color: #6b665c;
+  font-weight: 500;
+}
+
 .lyrics-toggle {
   flex-shrink: 0;
   cursor: pointer;

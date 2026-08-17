@@ -53,9 +53,34 @@ export async function pickAudioFile(): Promise<string | null> {
   return selected;
 }
 
-/** Sends the chosen file into the Rust pipeline; persists track + lyrics. */
+/** Sends the chosen file into the Rust pipeline; returns as soon as the track row exists. */
 export async function processUpload(filePath: string): Promise<Track> {
   return invoke<Track>("process_upload", { filePath });
+}
+
+export type PipelineFailed = {
+  trackId: number;
+  message: string;
+};
+
+export async function onPipelineFinished(
+  handler: (track: Track) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<Track>("pipeline-finished", (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}
+
+export async function onPipelineFailed(
+  handler: (error: PipelineFailed) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<PipelineFailed>("pipeline-failed", (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
 }
 
 export async function listTracks(): Promise<Track[]> {

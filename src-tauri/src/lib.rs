@@ -27,11 +27,13 @@ fn app_info() -> AppInfo {
     }
 }
 
-/// Accepts a local file path from the UI, saves track + lyrics, returns the track.
+/// Accepts a local file path from the UI, saves track metadata immediately,
+/// then finishes lyrics + language detection on a background thread.
 #[tauri::command]
 fn process_upload(app: AppHandle, file_path: String) -> Result<Track, String> {
-    let conn = storage::open(&app)?;
-    pipeline::process_upload(&conn, &file_path)
+    let track = pipeline::begin_upload(&app, &file_path)?;
+    pipeline::spawn_finish_upload(app, track.id, file_path);
+    Ok(track)
 }
 
 #[tauri::command]

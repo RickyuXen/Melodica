@@ -3,14 +3,21 @@
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::read_from_path;
 use lofty::tag::{Accessor, ItemKey};
-use rusqlite::Connection;
 use std::path::Path;
+use tauri::{AppHandle, Emitter};
 
 use crate::sidecar;
 use crate::storage::{self, Track};
 
-/// Accept a local music file, persist the track + lyrics (embedded or ASR), return the track.
-pub fn process_upload(conn: &Connection, file_path: &str) -> Result<Track, String> {
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineFailed {
+    pub track_id: i64,
+    pub message: String,
+}
+
+/// Fast path: validate the file, save basic track metadata, return immediately.
+pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
     let path = Path::new(file_path);
     if !path.is_file() {
         return Err(format!("file not found: {file_path}"));
@@ -21,28 +28,81 @@ pub fn process_upload(conn: &Connection, file_path: &str) -> Result<Track, Strin
         .title
         .unwrap_or_else(|| storage::title_from_path(file_path));
 
-    let track = storage::upsert_track(
-        conn,
+    let conn = storage::open(app)?;
+    storage::upsert_track(
+        &conn,
         file_path,
         &title,
         meta.artist.as_deref(),
         meta.album.as_deref(),
         meta.duration_ms,
-    )?;
+    )
+}
 
-    if !meta.lyric_lines.is_empty() {
-        storage::replace_lyrics(conn, track.id, &meta.lyric_lines, "embedded")?;
-        return Ok(track);
+/// Slow path: lyrics extraction + language detection. Safe to run on a background thread.
+pub fn finish_upload(app: &AppHandle, track_id: i64, file_path: &str) -> Result<Track, String> {
+    let path = Path::new(file_path);
+    if !path.is_file() {
+        return Err(format!("file not found: {file_path}"));
     }
 
-    // No embedded lyrics — fall back to local Whisper via the Python sidecar.
-    let asr_lines = sidecar::transcribe(file_path)?;
-    if !asr_lines.is_empty() {
-        storage::replace_lyrics(conn, track.id, &asr_lines, "asr")?;
-    }
-    // If ASR returns nothing, leave any previous cache intact.
+    let conn = storage::open(app)?;
+    let _track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
 
-    Ok(track)
+    let meta = read_file_metadata(path);
+    let mut whisper_language: Option<String> = None;
+
+    let lyric_lines = if !meta.lyric_lines.is_empty() {
+        storage::replace_lyrics(&conn, track_id, &meta.lyric_lines, "embedded")?;
+        meta.lyric_lines
+    } else {
+        let asr = sidecar::transcribe(file_path)?;
+        whisper_language = asr.language;
+        if !asr.lines.is_empty() {
+            storage::replace_lyrics(&conn, track_id, &asr.lines, "asr")?;
+        }
+        asr.lines
+    };
+
+    if !lyric_lines.is_empty() {
+        let lyrics_text = lyric_lines
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let language = match sidecar::detect_language(&lyrics_text) {
+            Ok(code) => Some(code),
+            Err(_) => whisper_language,
+        };
+
+        if let Some(code) = language {
+            storage::set_language_code(&conn, track_id, &code)?;
+        }
+    } else if let Some(code) = whisper_language {
+        storage::set_language_code(&conn, track_id, &code)?;
+    }
+
+    storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track missing after pipeline: {track_id}"))
+}
+
+/// Spawn lyrics + language work off the UI thread and emit completion events.
+pub fn spawn_finish_upload(app: AppHandle, track_id: i64, file_path: String) {
+    std::thread::spawn(move || {
+        match finish_upload(&app, track_id, &file_path) {
+            Ok(track) => {
+                let _ = app.emit("pipeline-finished", &track);
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed { track_id, message },
+                );
+            }
+        }
+    });
 }
 
 struct FileMetadata {

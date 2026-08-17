@@ -1,6 +1,6 @@
 """Melodica language sidecar — FastAPI.
 
-Bound to localhost only. Provides ASR transcription via faster-whisper.
+Bound to localhost only. Provides ASR transcription and language detection.
 """
 
 from __future__ import annotations
@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from langdetect import DetectorFactory, LangDetectException, detect
 from pydantic import BaseModel
+
+# Deterministic langdetect results across runs.
+DetectorFactory.seed = 0
 
 _model = None
 
@@ -33,6 +37,10 @@ class TranscribeRequest(BaseModel):
     file_path: str
 
 
+class DetectLanguageRequest(BaseModel):
+    text: str
+
+
 class LyricLineOut(BaseModel):
     text: str
     timestamp_ms: Optional[int] = None
@@ -40,6 +48,11 @@ class LyricLineOut(BaseModel):
 
 class TranscribeResponse(BaseModel):
     lines: list[LyricLineOut]
+    language: Optional[str] = None
+
+
+class DetectLanguageResponse(BaseModel):
+    language: str
 
 
 @app.get("/health")
@@ -56,7 +69,7 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"file not found: {req.file_path}")
 
-    segments, _info = _model.transcribe(str(path), beam_size=1)
+    segments, info = _model.transcribe(str(path), beam_size=1)
     lines: list[LyricLineOut] = []
     for segment in segments:
         text = (segment.text or "").strip()
@@ -69,10 +82,27 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
             )
         )
 
-    return TranscribeResponse(lines=lines)
+    language = getattr(info, "language", None)
+    return TranscribeResponse(lines=lines, language=language)
+
+
+@app.post("/detect-language")
+def detect_language(req: DetectLanguageRequest) -> DetectLanguageResponse:
+    """Classify the language of lyrics text (not raw audio)."""
+    text = " ".join(req.text.split())
+    if len(text) < 3:
+        raise HTTPException(status_code=400, detail="text too short to detect language")
+
+    try:
+        language = detect(text)
+    except LangDetectException as exc:
+        raise HTTPException(
+            status_code=422, detail=f"could not detect language: {exc}"
+        ) from exc
+
+    return DetectLanguageResponse(language=language)
 
 
 # Future endpoints (see plan.md):
-# - POST /detect-language
 # - POST /fetch-lyrics
 # - POST /translate-align

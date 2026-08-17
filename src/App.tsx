@@ -3,6 +3,8 @@ import {
   getAppInfo,
   getLyrics,
   listTracks,
+  onPipelineFailed,
+  onPipelineFinished,
   pickAudioFile,
   playbackPlay,
   playbackSeek,
@@ -29,6 +31,15 @@ function formatTime(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function languageLabel(code: string): string {
+  try {
+    const names = new Intl.DisplayNames(["en"], { type: "language" });
+    return names.of(code) ?? code.toUpperCase();
+  } catch {
+    return code.toUpperCase();
+  }
+}
+
 function App() {
   const [connection, setConnection] = useState<ConnectionState>({
     status: "checking",
@@ -41,6 +52,9 @@ function App() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [processingIds, setProcessingIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [playback, setPlayback] = useState<PlaybackStatus>({
     trackId: null,
     playing: false,
@@ -83,6 +97,54 @@ function App() {
     if (connection.status !== "connected") return;
 
     let cancelled = false;
+    let unlistenFinished: (() => void) | undefined;
+    let unlistenFailed: (() => void) | undefined;
+
+    void (async () => {
+      unlistenFinished = await onPipelineFinished((track) => {
+        if (cancelled) return;
+        setProcessingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(track.id);
+          return next;
+        });
+        setTracks((prev) => {
+          const idx = prev.findIndex((t) => t.id === track.id);
+          if (idx === -1) return [track, ...prev];
+          const next = [...prev];
+          next[idx] = track;
+          return next;
+        });
+        setLyricsByTrack((prev) => {
+          const next = { ...prev };
+          delete next[track.id];
+          return next;
+        });
+      });
+
+      unlistenFailed = await onPipelineFailed((error) => {
+        if (cancelled) return;
+        setProcessingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(error.trackId);
+          return next;
+        });
+        setUploadError(error.message);
+        void refreshTracks();
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unlistenFinished?.();
+      unlistenFailed?.();
+    };
+  }, [connection.status]);
+
+  useEffect(() => {
+    if (connection.status !== "connected") return;
+
+    let cancelled = false;
 
     async function poll() {
       try {
@@ -120,14 +182,13 @@ function App() {
       const path = await pickAudioFile();
       if (!path) return;
 
-      await processUpload(path);
-      setLyricsByTrack({});
+      const track = await processUpload(path);
+      setProcessingIds((prev) => new Set(prev).add(track.id));
       setOpenTrackId(null);
       await refreshTracks();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       setUploadError(message);
-      // Track may already be saved even if ASR failed — refresh the library.
       try {
         await refreshTracks();
       } catch {
@@ -211,6 +272,8 @@ function App() {
     }
   }
 
+  const processingCount = processingIds.size;
+
   return (
     <main className="shell">
       <header className="brand">
@@ -245,12 +308,13 @@ function App() {
           disabled={busy || connection.status !== "connected"}
           onClick={onUploadClick}
         >
-          {busy ? "Processing…" : "Upload music file"}
+          {busy ? "Adding…" : "Upload music file"}
         </button>
-        {busy && (
+        {processingCount > 0 && (
           <p className="muted">
-            Saving track and extracting lyrics (embedded tags or local
-            transcription). First transcription may download a Whisper model.
+            Processing {processingCount} track
+            {processingCount === 1 ? "" : "s"} in the background (lyrics +
+            language). You can keep using the app.
           </p>
         )}
         {uploadError && <p className="error">{uploadError}</p>}
@@ -267,6 +331,7 @@ function App() {
               const open = openTrackId === track.id;
               const lyrics = lyricsByTrack[track.id];
               const isCurrent = playback.trackId === track.id;
+              const isProcessing = processingIds.has(track.id);
               const durationMs =
                 (isCurrent && playback.durationMs > 0
                   ? playback.durationMs
@@ -286,6 +351,14 @@ function App() {
                       <strong>{track.title}</strong>
                       {track.artist && (
                         <span className="muted"> — {track.artist}</span>
+                      )}
+                      {track.languageCode && (
+                        <span className="lang-tag">
+                          {languageLabel(track.languageCode)}
+                        </span>
+                      )}
+                      {isProcessing && (
+                        <span className="processing-tag">Processing…</span>
                       )}
                     </div>
                     <button
@@ -354,6 +427,11 @@ function App() {
 
                   {open && (
                     <div className="lyrics-panel">
+                      {isProcessing && (
+                        <p className="muted">
+                          Still extracting lyrics in the background…
+                        </p>
+                      )}
                       {lyrics === "loading" && <p>Loading lyrics…</p>}
                       {lyrics === "error" && (
                         <p className="error">Could not load lyrics.</p>
