@@ -1,6 +1,6 @@
 //! Entry point for the per-song processing pipeline.
 
-use lofty::file::TaggedFileExt;
+use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::read_from_path;
 use lofty::tag::{Accessor, ItemKey};
 use rusqlite::Connection;
@@ -27,6 +27,7 @@ pub fn process_upload(conn: &Connection, file_path: &str) -> Result<Track, Strin
         &title,
         meta.artist.as_deref(),
         meta.album.as_deref(),
+        meta.duration_ms,
     )?;
 
     if !meta.lyric_lines.is_empty() {
@@ -48,6 +49,7 @@ struct FileMetadata {
     title: Option<String>,
     artist: Option<String>,
     album: Option<String>,
+    duration_ms: Option<i64>,
     lyric_lines: Vec<(Option<i64>, String)>,
 }
 
@@ -57,8 +59,18 @@ fn read_file_metadata(path: &Path) -> FileMetadata {
             title: None,
             artist: None,
             album: None,
+            duration_ms: None,
             lyric_lines: Vec::new(),
         };
+    };
+
+    let duration_ms = {
+        let ms = tagged.properties().duration().as_millis() as i64;
+        if ms > 0 {
+            Some(ms)
+        } else {
+            None
+        }
     };
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
@@ -88,6 +100,7 @@ fn read_file_metadata(path: &Path) -> FileMetadata {
         title,
         artist,
         album,
+        duration_ms,
         lyric_lines,
     }
 }

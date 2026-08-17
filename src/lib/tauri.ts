@@ -65,3 +65,26 @@ export async function listTracks(): Promise<Track[]> {
 export async function getLyrics(trackId: number): Promise<LyricLine[]> {
   return invoke<LyricLine[]>("get_lyrics", { trackId });
 }
+
+export type PlaybackStatus = {
+  trackId: number | null;
+  playing: boolean;
+  positionMs: number;
+  durationMs: number;
+};
+
+export async function playbackPlay(trackId: number): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_play", { trackId });
+}
+
+export async function playbackToggle(): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_toggle");
+}
+
+export async function playbackSeek(positionMs: number): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_seek", { positionMs });
+}
+
+export async function playbackStatus(): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_status");
+}

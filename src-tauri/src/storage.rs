@@ -104,11 +104,12 @@ pub fn upsert_track(
     title: &str,
     artist: Option<&str>,
     album: Option<&str>,
+    duration_ms: Option<i64>,
 ) -> Result<Track, String> {
     if let Some(existing) = get_track_by_path(conn, file_path)? {
         conn.execute(
-            "UPDATE tracks SET title = ?1, artist = ?2, album = ?3 WHERE id = ?4",
-            params![title, artist, album, existing.id],
+            "UPDATE tracks SET title = ?1, artist = ?2, album = ?3, duration_ms = ?4 WHERE id = ?5",
+            params![title, artist, album, duration_ms, existing.id],
         )
         .map_err(|e| format!("update track: {e}"))?;
         return get_track_by_id(conn, existing.id)?
@@ -116,8 +117,8 @@ pub fn upsert_track(
     }
 
     conn.execute(
-        "INSERT INTO tracks (file_path, title, artist, album) VALUES (?1, ?2, ?3, ?4)",
-        params![file_path, title, artist, album],
+        "INSERT INTO tracks (file_path, title, artist, album, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![file_path, title, artist, album, duration_ms],
     )
     .map_err(|e| format!("insert track: {e}"))?;
 
@@ -221,7 +222,7 @@ fn get_track_by_path(conn: &Connection, file_path: &str) -> Result<Option<Track>
     .map_err(|e| format!("query track by path: {e}"))
 }
 
-fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, String> {
+pub fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, String> {
     conn.query_row(
         "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
          FROM tracks WHERE id = ?1",

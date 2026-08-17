@@ -1,12 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getAppInfo,
   getLyrics,
   listTracks,
   pickAudioFile,
+  playbackPlay,
+  playbackSeek,
+  playbackStatus,
+  playbackToggle,
   processUpload,
   type AppInfo,
   type LyricLine,
+  type PlaybackStatus,
   type Track,
 } from "./lib/tauri";
 import "./App.css";
@@ -15,6 +20,14 @@ type ConnectionState =
   | { status: "checking" }
   | { status: "connected"; info: AppInfo }
   | { status: "error"; message: string };
+
+function formatTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0:00";
+  const totalSec = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
 
 function App() {
   const [connection, setConnection] = useState<ConnectionState>({
@@ -26,7 +39,18 @@ function App() {
   >({});
   const [openTrackId, setOpenTrackId] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [playback, setPlayback] = useState<PlaybackStatus>({
+    trackId: null,
+    playing: false,
+    positionMs: 0,
+    durationMs: 0,
+  });
+  const [scrub, setScrub] = useState<{ trackId: number; ms: number } | null>(
+    null,
+  );
+  const seekingRef = useRef(false);
 
   async function refreshTracks() {
     const rows = await listTracks();
@@ -54,6 +78,39 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (connection.status !== "connected") return;
+
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const status = await playbackStatus();
+        if (cancelled || seekingRef.current) return;
+        setPlayback(status);
+        if (status.trackId != null && status.durationMs > 0) {
+          setTracks((prev) =>
+            prev.map((t) =>
+              t.id === status.trackId &&
+              (t.durationMs == null || t.durationMs <= 0)
+                ? { ...t, durationMs: status.durationMs }
+                : t,
+            ),
+          );
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }
+
+    poll();
+    const id = window.setInterval(poll, 250);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [connection.status]);
 
   async function onUploadClick() {
     setBusy(true);
@@ -102,6 +159,58 @@ function App() {
     }
   }
 
+  async function onPlayPause(track: Track) {
+    setPlaybackError(null);
+    try {
+      const isCurrent = playback.trackId === track.id;
+      const finished =
+        isCurrent &&
+        !playback.playing &&
+        playback.durationMs > 0 &&
+        playback.positionMs >= playback.durationMs;
+      const status =
+        isCurrent && !finished
+          ? await playbackToggle()
+          : await playbackPlay(track.id);
+      applyPlayback(status);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPlaybackError(message);
+    }
+  }
+
+  function applyPlayback(status: PlaybackStatus) {
+    setPlayback(status);
+    setScrub(null);
+    if (status.trackId != null && status.durationMs > 0) {
+      setTracks((prev) =>
+        prev.map((t) =>
+          t.id === status.trackId && (t.durationMs == null || t.durationMs <= 0)
+            ? { ...t, durationMs: status.durationMs }
+            : t,
+        ),
+      );
+    }
+  }
+
+  async function onSeekCommit(track: Track, valueMs: number) {
+    seekingRef.current = true;
+    setPlaybackError(null);
+    try {
+      if (playback.trackId !== track.id) {
+        await playbackPlay(track.id);
+      }
+      const status = await playbackSeek(valueMs);
+      applyPlayback(status);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPlaybackError(message);
+    } finally {
+      seekingRef.current = false;
+      setScrub(null);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="brand">
@@ -145,6 +254,7 @@ function App() {
           </p>
         )}
         {uploadError && <p className="error">{uploadError}</p>}
+        {playbackError && <p className="error">{playbackError}</p>}
       </section>
 
       <section className="library">
@@ -156,6 +266,18 @@ function App() {
             {tracks.map((track) => {
               const open = openTrackId === track.id;
               const lyrics = lyricsByTrack[track.id];
+              const isCurrent = playback.trackId === track.id;
+              const durationMs =
+                (isCurrent && playback.durationMs > 0
+                  ? playback.durationMs
+                  : track.durationMs) ?? 0;
+              const positionMs =
+                scrub?.trackId === track.id
+                  ? scrub.ms
+                  : isCurrent
+                    ? playback.positionMs
+                    : 0;
+              const playing = isCurrent && playback.playing;
 
               return (
                 <li key={track.id} className="track-item">
@@ -173,6 +295,61 @@ function App() {
                     >
                       {open ? "Hide lyrics" : "View lyrics"}
                     </button>
+                  </div>
+
+                  <div className="player-row">
+                    <button
+                      type="button"
+                      className="play-toggle"
+                      disabled={connection.status !== "connected"}
+                      onClick={() => onPlayPause(track)}
+                      aria-label={playing ? "Pause" : "Play"}
+                    >
+                      {playing ? "Pause" : "Play"}
+                    </button>
+                    <div className="seek-wrap">
+                      <input
+                        type="range"
+                        className="seek"
+                        min={0}
+                        max={Math.max(durationMs, 1)}
+                        step={100}
+                        value={Math.min(positionMs, Math.max(durationMs, 1))}
+                        disabled={
+                          connection.status !== "connected" || durationMs <= 0
+                        }
+                        aria-label={`Seek ${track.title}`}
+                        onPointerDown={() => {
+                          seekingRef.current = true;
+                        }}
+                        onChange={(e) => {
+                          setScrub({
+                            trackId: track.id,
+                            ms: Number(e.target.value),
+                          });
+                        }}
+                        onPointerUp={(e) => {
+                          const value = Number(
+                            (e.target as HTMLInputElement).value,
+                          );
+                          void onSeekCommit(track, value);
+                        }}
+                        onPointerCancel={() => {
+                          seekingRef.current = false;
+                          setScrub(null);
+                        }}
+                        onKeyUp={(e) => {
+                          const value = Number(
+                            (e.target as HTMLInputElement).value,
+                          );
+                          void onSeekCommit(track, value);
+                        }}
+                      />
+                      <div className="seek-times" aria-hidden="true">
+                        <span>{formatTime(positionMs)}</span>
+                        <span>{formatTime(durationMs)}</span>
+                      </div>
+                    </div>
                   </div>
 
                   {open && (

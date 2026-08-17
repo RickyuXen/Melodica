@@ -3,9 +3,12 @@ mod playback;
 mod sidecar;
 mod storage;
 
-use serde::Serialize;
-use tauri::AppHandle;
+use std::sync::Mutex;
 
+use serde::Serialize;
+use tauri::{AppHandle, State};
+
+use playback::{PlaybackStatus, SharedPlayback};
 use storage::{LyricLine, Track};
 
 #[derive(Serialize)]
@@ -43,15 +46,65 @@ fn get_lyrics(app: AppHandle, track_id: i64) -> Result<Vec<LyricLine>, String> {
     storage::get_lyrics(&conn, track_id)
 }
 
+#[tauri::command]
+fn playback_play(
+    app: AppHandle,
+    engine: State<'_, SharedPlayback>,
+    track_id: i64,
+) -> Result<PlaybackStatus, String> {
+    let conn = storage::open(&app)?;
+    let track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+
+    playback::with_engine(&engine, |player| {
+        player.play_file(track.id, &track.file_path, track.duration_ms)
+    })
+}
+
+#[tauri::command]
+fn playback_toggle(engine: State<'_, SharedPlayback>) -> Result<PlaybackStatus, String> {
+    playback::with_engine(&engine, |player| Ok(player.toggle()))
+}
+
+#[tauri::command]
+fn playback_seek(
+    engine: State<'_, SharedPlayback>,
+    position_ms: u64,
+) -> Result<PlaybackStatus, String> {
+    playback::with_engine(&engine, |player| player.seek(position_ms))
+}
+
+#[tauri::command]
+fn playback_status(engine: State<'_, SharedPlayback>) -> Result<PlaybackStatus, String> {
+    let guard = engine
+        .lock()
+        .map_err(|_| "playback state poisoned".to_string())?;
+
+    Ok(match guard.as_ref() {
+        Some(player) => player.status(),
+        None => PlaybackStatus {
+            track_id: None,
+            playing: false,
+            position_ms: 0,
+            duration_ms: 0,
+        },
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(Mutex::new(None) as SharedPlayback)
         .invoke_handler(tauri::generate_handler![
             app_info,
             process_upload,
             list_tracks,
-            get_lyrics
+            get_lyrics,
+            playback_play,
+            playback_toggle,
+            playback_seek,
+            playback_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
