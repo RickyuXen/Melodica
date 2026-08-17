@@ -1,0 +1,72 @@
+/*
+  Melodica theme
+  Strategy: full palette on a light Operate surface.
+  Purple carries brand + structure; orange owns actions;
+  white owns canvas and elevated panels. No gradient text.
+*/
+
+:root {
+  /* --- Primitives --- */
+  --purple-950: oklch(0.26 0.08 305);
+  --purple-800: oklch(0.38 0.12 305);
+  --purple-600: oklch(0.48 0.14 305);
+  --purple-400: oklch(0.62 0.12 305);
+  --purple-200: oklch(0.88 0.035 305);
+  --purple-100: oklch(0.95 0.02 305);
+  --purple-50: oklch(0.98 0.012 305);
+
+  --orange-700: oklch(0.55 0.16 48);
+  --orange-600: oklch(0.62 0.17 50);
+  --orange-400: oklch(0.75 0.14 55);
+  --orange-100: oklch(0.94 0.04 55);
+  --orange-50: oklch(0.97 0.02 55);
+
+  --white: oklch(1 0 0);
+  --error: oklch(0.48 0.15 25);
+
+  /* --- Semantic roles --- */
+  --color-canvas: var(--purple-50);
+  --color-surface: var(--white);
+  --color-surface-muted: var(--purple-100);
+  --color-text: var(--purple-950);
+  --color-text-muted: oklch(0.48 0.05 305);
+  --color-border: var(--purple-200);
+  --color-border-strong: oklch(0.78 0.04 305);
+  --color-brand: var(--purple-800);
+  --color-action: var(--orange-600);
+  --color-action-hover: var(--orange-700);
+  --color-action-text: var(--white);
+  --color-focus: var(--orange-600);
+  --color-accent-soft: var(--orange-50);
+  --color-tag: var(--purple-100);
+  --color-tag-text: var(--purple-800);
+  --color-processing: var(--orange-700);
+  --color-error: var(--error);
+  --color-selection: oklch(0.9 0.06 50);
+  --color-selection-text: var(--purple-950);
+
+  /* --- Type & rhythm --- */
+  --font-sans: "Sora", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.5rem;
+  --radius: 0.35rem;
+  --shadow: 0 1px 2px oklch(0.35 0.06 305 / 0.06),
+    0 6px 16px oklch(0.35 0.06 305 / 0.05);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --focus-ring: 0 0 0 3px oklch(0.75 0.12 50 / 0.45);
+}
+
+::selection {
+  background: var(--color-selection);
+  color: var(--color-selection-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
