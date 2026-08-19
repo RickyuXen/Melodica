@@ -9,7 +9,6 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use lrclib::LyricsMatch;
 use playback::{PlaybackStatus, SharedPlayback};
 use storage::{LyricLine, Track};
 
@@ -41,8 +40,13 @@ fn search_lyrics(
     app: AppHandle,
     track_id: i64,
     query: Option<String>,
-) -> Result<Vec<LyricsMatch>, String> {
-    pipeline::search_lyrics(&app, track_id, query)
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_search_lyrics(app, track_id, query);
+    Ok(())
 }
 
 /// Starts lyrics processing on a background thread (paste > LRCLIB > tags > Whisper).

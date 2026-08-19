@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { EditTrackPicker } from "./components/EditTrackPicker";
+import { Header, type AppTab } from "./components/Header";
 import { TrackItem } from "./components/TrackItem";
+import type { TrackSearchState } from "./components/LyricsEditor";
 import { errorMessage } from "./lib/format";
 import {
   getAppInfo,
   getLyrics,
   listTracks,
+  onLyricsSearchFailed,
+  onLyricsSearchFinished,
   onPipelineFailed,
   onPipelineFinished,
   pickAudioFile,
@@ -28,6 +33,7 @@ type ConnectionState =
   | { status: "error"; message: string };
 
 type LyricsCache = Record<number, LyricLine[] | "loading" | "error">;
+type SearchCache = Record<number, TrackSearchState>;
 
 const emptyPlayback: PlaybackStatus = {
   trackId: null,
@@ -37,18 +43,23 @@ const emptyPlayback: PlaybackStatus = {
 };
 
 function App() {
+  const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [connection, setConnection] = useState<ConnectionState>({
     status: "checking",
   });
   const [tracks, setTracks] = useState<Track[]>([]);
   const [lyricsByTrack, setLyricsByTrack] = useState<LyricsCache>({});
   const [openTrackId, setOpenTrackId] = useState<number | null>(null);
+  const [selectedEditTrackId, setSelectedEditTrackId] = useState<number | null>(
+    null,
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [processingIds, setProcessingIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [searchByTrack, setSearchByTrack] = useState<SearchCache>({});
   const [playback, setPlayback] = useState<PlaybackStatus>(emptyPlayback);
   const [scrub, setScrub] = useState<{ trackId: number; ms: number } | null>(
     null,
@@ -66,6 +77,28 @@ function App() {
       const next = new Set(prev);
       next.delete(trackId);
       return next;
+    });
+  }
+
+  function applySearchResult(
+    trackId: number,
+    query: string | null,
+    matches: TrackSearchState["matches"],
+    error: string | null,
+  ) {
+    const activeQuery = query?.trim() ?? "";
+    setSearchByTrack((prev) => {
+      const current = prev[trackId];
+      if (current?.activeQuery !== activeQuery) return prev;
+      return {
+        ...prev,
+        [trackId]: {
+          activeQuery,
+          searching: false,
+          matches,
+          error,
+        },
+      };
     });
   }
 
@@ -124,6 +157,8 @@ function App() {
     let cancelled = false;
     let unlistenFinished: (() => void) | undefined;
     let unlistenFailed: (() => void) | undefined;
+    let unlistenSearchFinished: (() => void) | undefined;
+    let unlistenSearchFailed: (() => void) | undefined;
 
     void (async () => {
       unlistenFinished = await onPipelineFinished((track) => {
@@ -147,14 +182,38 @@ function App() {
         setUploadError(error.message);
         void refreshTracks();
       });
+
+      unlistenSearchFinished = await onLyricsSearchFinished((result) => {
+        if (cancelled) return;
+        applySearchResult(
+          result.trackId,
+          result.query,
+          result.matches,
+          null,
+        );
+      });
+
+      unlistenSearchFailed = await onLyricsSearchFailed((error) => {
+        if (cancelled) return;
+        applySearchResult(error.trackId, error.query, [], error.message);
+      });
     })();
 
     return () => {
       cancelled = true;
       unlistenFinished?.();
       unlistenFailed?.();
+      unlistenSearchFinished?.();
+      unlistenSearchFailed?.();
     };
   }, [connected]);
+
+  // Clear edit selection if the track was removed from the library.
+  useEffect(() => {
+    if (selectedEditTrackId == null) return;
+    if (tracks.some((t) => t.id === selectedEditTrackId)) return;
+    setSelectedEditTrackId(null);
+  }, [tracks, selectedEditTrackId]);
 
   // Playback position poll.
   useEffect(() => {
@@ -201,6 +260,7 @@ function App() {
       await processUpload(path);
       setOpenTrackId(null);
       await refreshTracks();
+      setActiveTab("home");
     } catch (err: unknown) {
       setUploadError(errorMessage(err, "Upload failed"));
       try {
@@ -210,6 +270,21 @@ function App() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onSelectEditTrack(trackId: number) {
+    setSelectedEditTrackId(trackId);
+
+    const cached = lyricsByTrack[trackId];
+    if (cached && cached !== "error") return;
+
+    setLyricsByTrack((prev) => ({ ...prev, [trackId]: "loading" }));
+    try {
+      const lines = await getLyrics(trackId);
+      setLyricsByTrack((prev) => ({ ...prev, [trackId]: lines }));
+    } catch {
+      setLyricsByTrack((prev) => ({ ...prev, [trackId]: "error" }));
     }
   }
 
@@ -233,8 +308,28 @@ function App() {
     }
   }
 
-  async function onSearchLyrics(trackId: number, query: string) {
-    return searchLyrics(trackId, query);
+  async function onRequestSearch(trackId: number, query: string) {
+    const activeQuery = query.trim();
+    setSearchByTrack((prev) => ({
+      ...prev,
+      [trackId]: {
+        activeQuery,
+        searching: true,
+        matches: prev[trackId]?.matches ?? [],
+        error: null,
+      },
+    }));
+
+    try {
+      await searchLyrics(trackId, activeQuery || null);
+    } catch (err: unknown) {
+      applySearchResult(
+        trackId,
+        activeQuery,
+        [],
+        err instanceof Error ? err.message : "Could not start lyrics search.",
+      );
+    }
   }
 
   async function onProcessLyrics(
@@ -288,13 +383,107 @@ function App() {
   }
 
   const processingCount = processingIds.size;
+  const searchingIds = new Set(
+    Object.entries(searchByTrack)
+      .filter(([, state]) => state.searching)
+      .map(([id]) => Number(id)),
+  );
+
+  function renderTrackItem(track: Track, mode: "library" | "edit") {
+    const isCurrent = playback.trackId === track.id;
+    const durationMs =
+      (isCurrent && playback.durationMs > 0
+        ? playback.durationMs
+        : track.durationMs) ?? 0;
+    const positionMs =
+      scrub?.trackId === track.id
+        ? scrub.ms
+        : isCurrent
+          ? playback.positionMs
+          : 0;
+
+    return (
+      <TrackItem
+        key={track.id}
+        track={track}
+        mode={mode}
+        lyrics={lyricsByTrack[track.id]}
+        lyricsOpen={openTrackId === track.id}
+        isCurrent={isCurrent}
+        isProcessing={processingIds.has(track.id)}
+        playing={isCurrent && playback.playing}
+        positionMs={positionMs}
+        durationMs={durationMs}
+        canControl={connected}
+        onToggleLyrics={() => void onToggleLyrics(track.id)}
+        onPlayPause={() => void onPlayPause(track)}
+        onScrub={(ms) => setScrub({ trackId: track.id, ms })}
+        onSeekCommit={(ms) => void onSeekCommit(track, ms)}
+        onSeekCancel={() => {
+          seekingRef.current = false;
+          setScrub(null);
+        }}
+        onSeekPointerDown={() => {
+          seekingRef.current = true;
+        }}
+        searchState={searchByTrack[track.id]}
+        onRequestSearch={(query) => void onRequestSearch(track.id, query)}
+        onProcessLyrics={(pasted, lrclibId) =>
+          void onProcessLyrics(track.id, pasted, lrclibId)
+        }
+      />
+    );
+  }
+
+  function renderTrackList() {
+    if (tracks.length === 0) {
+      return (
+        <p className="muted">No tracks yet. Upload a music file to begin.</p>
+      );
+    }
+
+    return (
+      <ul className="track-list">
+        {tracks.map((track) => renderTrackItem(track, "library"))}
+      </ul>
+    );
+  }
+
+  function renderEditTab() {
+    if (tracks.length === 0) {
+      return (
+        <p className="muted">No tracks to edit yet. Upload a music file first.</p>
+      );
+    }
+
+    const selectedTrack =
+      selectedEditTrackId != null
+        ? tracks.find((t) => t.id === selectedEditTrackId)
+        : undefined;
+
+    return (
+      <>
+        <EditTrackPicker
+          tracks={tracks}
+          selectedId={selectedEditTrackId}
+          processingIds={processingIds}
+          searchingIds={searchingIds}
+          onSelect={(trackId) => void onSelectEditTrack(trackId)}
+        />
+        {selectedTrack && (
+          <div className="edit-detail">
+            <ul className="track-list">
+              {renderTrackItem(selectedTrack, "edit")}
+            </ul>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <main className="shell">
-      <header className="brand">
-        <h1>Melodica</h1>
-        <p>Learn languages through the music you already like.</p>
-      </header>
+      <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
       <section className="panel status" aria-live="polite">
         {connection.status === "checking" && (
@@ -317,78 +506,55 @@ function App() {
         )}
       </section>
 
-      <section className="panel upload">
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || !connected}
-          onClick={onUploadClick}
-        >
-          {busy ? "Adding…" : "Upload music file"}
-        </button>
-        {processingCount > 0 && (
-          <p className="muted">
-            Processing {processingCount} track
-            {processingCount === 1 ? "" : "s"} in the background. You can keep
-            using the app.
+      {(uploadError || playbackError) && (
+        <section className="panel errors" aria-live="polite">
+          {uploadError && <p className="error">{uploadError}</p>}
+          {playbackError && <p className="error">{playbackError}</p>}
+        </section>
+      )}
+
+      {activeTab === "home" && (
+        <section className="panel library">
+          <h2>Library</h2>
+          {renderTrackList()}
+        </section>
+      )}
+
+      {activeTab === "upload" && (
+        <section className="panel upload">
+          <h2>Upload music</h2>
+          <p className="muted upload-desc">
+            Add audio files to your library. Supported formats include MP3,
+            FLAC, WAV, OGG, M4A, and AAC.
           </p>
-        )}
-        {uploadError && <p className="error">{uploadError}</p>}
-        {playbackError && <p className="error">{playbackError}</p>}
-      </section>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !connected}
+            onClick={onUploadClick}
+          >
+            {busy ? "Adding…" : "Choose music file"}
+          </button>
+          {processingCount > 0 && (
+            <p className="muted">
+              Processing {processingCount} track
+              {processingCount === 1 ? "" : "s"} in the background. You can keep
+              using the app.
+            </p>
+          )}
+        </section>
+      )}
 
-      <section className="panel library">
-        <h2>Library</h2>
-        {tracks.length === 0 ? (
-          <p className="muted">No tracks yet. Upload a music file to begin.</p>
-        ) : (
-          <ul className="track-list">
-            {tracks.map((track) => {
-              const isCurrent = playback.trackId === track.id;
-              const durationMs =
-                (isCurrent && playback.durationMs > 0
-                  ? playback.durationMs
-                  : track.durationMs) ?? 0;
-              const positionMs =
-                scrub?.trackId === track.id
-                  ? scrub.ms
-                  : isCurrent
-                    ? playback.positionMs
-                    : 0;
-
-              return (
-                <TrackItem
-                  key={track.id}
-                  track={track}
-                  lyrics={lyricsByTrack[track.id]}
-                  lyricsOpen={openTrackId === track.id}
-                  isCurrent={isCurrent}
-                  isProcessing={processingIds.has(track.id)}
-                  playing={isCurrent && playback.playing}
-                  positionMs={positionMs}
-                  durationMs={durationMs}
-                  canControl={connected}
-                  onToggleLyrics={() => void onToggleLyrics(track.id)}
-                  onPlayPause={() => void onPlayPause(track)}
-                  onScrub={(ms) => setScrub({ trackId: track.id, ms })}
-                  onSeekCommit={(ms) => void onSeekCommit(track, ms)}
-                  onSeekCancel={() => {
-                    seekingRef.current = false;
-                    setScrub(null);
-                  }}
-                  onSeekPointerDown={() => {
-                    seekingRef.current = true;
-                  }}
-                  onSearchLyrics={(query) => onSearchLyrics(track.id, query)}
-                  onProcessLyrics={(pasted, lrclibId) =>
-                    void onProcessLyrics(track.id, pasted, lrclibId)
-                  }
-                />
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      {activeTab === "edit" && (
+        <section className="panel edit">
+          <h2>Edit tracks</h2>
+          <p className="muted edit-desc">
+            Find, match, or paste lyrics for each track, then process to
+            extract and sync them.
+          </p>
+          {renderEditTab()}
+        </section>
+      )}
     </main>
   );
 }

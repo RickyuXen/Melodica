@@ -72,11 +72,49 @@ export type LyricsMatch = {
 export async function searchLyrics(
   trackId: number,
   query?: string | null,
-): Promise<LyricsMatch[]> {
-  return invoke<LyricsMatch[]>("search_lyrics", {
+): Promise<void> {
+  return invoke<void>("search_lyrics", {
     trackId,
     query: query?.trim() ? query.trim() : null,
   });
+}
+
+export type LyricsSearchFinished = {
+  trackId: number;
+  query: string | null;
+  matches: LyricsMatch[];
+};
+
+export type LyricsSearchFailed = {
+  trackId: number;
+  query: string | null;
+  message: string;
+};
+
+export async function onLyricsSearchFinished(
+  handler: (result: LyricsSearchFinished) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LyricsSearchFinished>(
+    "lyrics-search-finished",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
+}
+
+export async function onLyricsSearchFailed(
+  handler: (error: LyricsSearchFailed) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LyricsSearchFailed>(
+    "lyrics-search-failed",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
 }
 
 export async function processLyrics(

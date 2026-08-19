@@ -18,6 +18,22 @@ pub struct PipelineFailed {
     pub message: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsSearchFinished {
+    pub track_id: i64,
+    pub query: Option<String>,
+    pub matches: Vec<LyricsMatch>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsSearchFailed {
+    pub track_id: i64,
+    pub query: Option<String>,
+    pub message: String,
+}
+
 /// Fast path: validate the file, save metadata, and store embedded lyrics if present.
 pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
     let path = Path::new(file_path);
@@ -61,8 +77,36 @@ pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
         .ok_or_else(|| format!("track missing after upload: {}", track.id))
 }
 
+/// Search LRCLIB off the UI thread and emit completion events.
+pub fn spawn_search_lyrics(app: AppHandle, track_id: i64, query: Option<String>) {
+    std::thread::spawn(move || {
+        match search_lyrics(&app, track_id, query.clone()) {
+            Ok(matches) => {
+                let _ = app.emit(
+                    "lyrics-search-finished",
+                    &LyricsSearchFinished {
+                        track_id,
+                        query,
+                        matches,
+                    },
+                );
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "lyrics-search-failed",
+                    &LyricsSearchFailed {
+                        track_id,
+                        query,
+                        message,
+                    },
+                );
+            }
+        }
+    });
+}
+
 /// Search LRCLIB using a custom query, or title/artist from the stored track.
-pub fn search_lyrics(
+fn search_lyrics(
     app: &AppHandle,
     track_id: i64,
     query: Option<String>,
