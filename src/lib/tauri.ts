@@ -58,6 +58,39 @@ export async function processUpload(filePath: string): Promise<Track> {
   return invoke<Track>("process_upload", { filePath });
 }
 
+export type LyricsMatch = {
+  id: number;
+  trackName: string;
+  artistName: string;
+  albumName: string | null;
+  durationSeconds: number | null;
+  instrumental: boolean;
+  hasSynced: boolean;
+  hasPlain: boolean;
+};
+
+export async function searchLyrics(
+  trackId: number,
+  query?: string | null,
+): Promise<LyricsMatch[]> {
+  return invoke<LyricsMatch[]>("search_lyrics", {
+    trackId,
+    query: query?.trim() ? query.trim() : null,
+  });
+}
+
+export async function processLyrics(
+  trackId: number,
+  pasted?: string | null,
+  lrclibId?: number | null,
+): Promise<void> {
+  return invoke<void>("process_lyrics", {
+    trackId,
+    pasted: pasted?.trim() ? pasted : null,
+    lrclibId: lrclibId ?? null,
+  });
+}
+
 export type PipelineFailed = {
   trackId: number;
   message: string;

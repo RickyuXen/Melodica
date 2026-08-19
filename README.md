@@ -15,7 +15,7 @@ Downloadable desktop music player that surfaces dual-language, line-aligned lyri
 - Node.js 18+
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload (`link.exe` must be on PATH)
-- Python 3.10+ (required for ASR when a file has no embedded lyrics)
+- Python 3.10+ (required for ASR when Process has no pasted lyrics, no LRCLIB match, and no embedded tags)
 
 ## Run the desktop app
 
@@ -24,14 +24,14 @@ npm install
 npm run tauri:dev
 ```
 
-For transcription fallback (no embedded lyrics), also start the sidecar in another terminal:
+For transcription fallback (Process with no pasted lyrics and no selected match), also start the sidecar in another terminal:
 
 ```bash
 npm run sidecar:install
 npm run sidecar:dev
 ```
 
-First sidecar start downloads the Whisper `base` model. Uploads without embedded lyrics call `POST /transcribe` and store lines with `source=asr`.
+First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe` and stores lines with `source=asr`. LRCLIB lookup and pasted lyrics run from the Rust core and do not need the sidecar.
 
 Build installers with:
 
@@ -48,6 +48,6 @@ Bound to `127.0.0.1:8765`.
 
 ## Current scope
 
-Implemented: Tauri window, library upload, SQLite tracks/lyrics, embedded lyrics via lofty, ASR fallback via faster-whisper.
+Implemented: Tauri window, library upload, playback, SQLite tracks/lyrics, embedded lyrics via lofty, LRCLIB search, user-pasted lyrics, ASR fallback via faster-whisper.
 
-Next (per plan.md): LRCLIB lookup, playback controls, translation.
+Next (per plan.md): translation, karaoke-style line highlight.

@@ -10,13 +10,18 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from langdetect import DetectorFactory, LangDetectException, detect
 from pydantic import BaseModel
 
-# Deterministic langdetect results across runs.
-DetectorFactory.seed = 0
+from .language import (
+    detect_lyrics_language,
+    metadata_blob,
+    script_language,
+    whisper_language_code,
+)
 
 _model = None
+_CLIP_SECONDS = 30
+_SAMPLE_RATE = 16000
 
 
 @asynccontextmanager
@@ -35,10 +40,17 @@ app = FastAPI(title="Melodica Sidecar", version="0.1.0", lifespan=lifespan)
 
 class TranscribeRequest(BaseModel):
     file_path: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
 
 
 class DetectLanguageRequest(BaseModel):
     text: str
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    file_path: Optional[str] = None
 
 
 class LyricLineOut(BaseModel):
@@ -69,7 +81,23 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"file not found: {req.file_path}")
 
-    segments, info = _model.transcribe(str(path), beam_size=1)
+    from faster_whisper.audio import decode_audio
+
+    audio = decode_audio(str(path), sampling_rate=_SAMPLE_RATE)
+    language = _resolve_whisper_language(
+        audio,
+        title=req.title,
+        artist=req.artist,
+        album=req.album,
+        file_path=req.file_path,
+    )
+
+    segments, info = _model.transcribe(
+        audio,
+        language=language,
+        beam_size=1,
+        condition_on_previous_text=False,
+    )
     lines: list[LyricLineOut] = []
     for segment in segments:
         text = (segment.text or "").strip()
@@ -82,27 +110,80 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
             )
         )
 
-    language = getattr(info, "language", None)
-    return TranscribeResponse(lines=lines, language=language)
+    detected = getattr(info, "language", None) or language
+    return TranscribeResponse(lines=lines, language=detected)
 
 
 @app.post("/detect-language")
 def detect_language(req: DetectLanguageRequest) -> DetectLanguageResponse:
     """Classify the language of lyrics text (not raw audio)."""
     text = " ".join(req.text.split())
-    if len(text) < 3:
+    if len(text) < 3 and not metadata_blob(
+        req.title, req.artist, req.album, req.file_path
+    ):
         raise HTTPException(status_code=400, detail="text too short to detect language")
 
     try:
-        language = detect(text)
-    except LangDetectException as exc:
-        raise HTTPException(
-            status_code=422, detail=f"could not detect language: {exc}"
-        ) from exc
+        language = detect_lyrics_language(
+            text,
+            title=req.title,
+            artist=req.artist,
+            album=req.album,
+            file_path=req.file_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return DetectLanguageResponse(language=language)
 
 
+def _resolve_whisper_language(
+    audio,
+    title: Optional[str],
+    artist: Optional[str],
+    album: Optional[str],
+    file_path: str,
+) -> str | None:
+    """Pick a decode language before ASR so Cantonese is not forced into Hangul."""
+    meta = whisper_language_code(
+        script_language(
+            metadata_blob(title, artist, album, file_path),
+            min_chars=2,
+        )
+    )
+    if meta:
+        return meta
+
+    language, _prob, _ranked = _model.detect_language(
+        audio=audio,
+        vad_filter=True,
+        language_detection_segments=5,
+        language_detection_threshold=0.5,
+    )
+    if language == "ko" and _zh_fits_better_than_ko(audio):
+        return "zh"
+    return language
+
+
+def _zh_fits_better_than_ko(audio) -> bool:
+    """Score a short clip as Chinese vs Korean. Cantonese audio usually prefers zh."""
+    clip = audio[: _SAMPLE_RATE * _CLIP_SECONDS]
+    return _mean_logprob(clip, "zh") > _mean_logprob(clip, "ko")
+
+
+def _mean_logprob(audio, language: str) -> float:
+    segments, _info = _model.transcribe(
+        audio,
+        language=language,
+        beam_size=1,
+        without_timestamps=True,
+        condition_on_previous_text=False,
+    )
+    scores = [segment.avg_logprob for segment in segments]
+    if not scores:
+        return float("-inf")
+    return sum(scores) / len(scores)
+
+
 # Future endpoints (see plan.md):
-# - POST /fetch-lyrics
 # - POST /translate-align

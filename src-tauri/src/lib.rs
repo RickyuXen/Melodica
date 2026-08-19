@@ -1,3 +1,4 @@
+mod lrclib;
 mod pipeline;
 mod playback;
 mod sidecar;
@@ -8,6 +9,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
+use lrclib::LyricsMatch;
 use playback::{PlaybackStatus, SharedPlayback};
 use storage::{LyricLine, Track};
 
@@ -27,13 +29,36 @@ fn app_info() -> AppInfo {
     }
 }
 
-/// Accepts a local file path from the UI, saves track metadata immediately,
-/// then finishes lyrics + language detection on a background thread.
+/// Accepts a local file path from the UI and saves track metadata immediately.
+/// Embedded lyric tags are stored if present; Whisper is not started here.
 #[tauri::command]
 fn process_upload(app: AppHandle, file_path: String) -> Result<Track, String> {
-    let track = pipeline::begin_upload(&app, &file_path)?;
-    pipeline::spawn_finish_upload(app, track.id, file_path);
-    Ok(track)
+    pipeline::begin_upload(&app, &file_path)
+}
+
+#[tauri::command]
+fn search_lyrics(
+    app: AppHandle,
+    track_id: i64,
+    query: Option<String>,
+) -> Result<Vec<LyricsMatch>, String> {
+    pipeline::search_lyrics(&app, track_id, query)
+}
+
+/// Starts lyrics processing on a background thread (paste > LRCLIB > tags > Whisper).
+#[tauri::command]
+fn process_lyrics(
+    app: AppHandle,
+    track_id: i64,
+    pasted: Option<String>,
+    lrclib_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_process_lyrics(app, track_id, pasted, lrclib_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -101,6 +126,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             process_upload,
+            search_lyrics,
+            process_lyrics,
             list_tracks,
             get_lyrics,
             playback_play,

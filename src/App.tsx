@@ -12,7 +12,9 @@ import {
   playbackSeek,
   playbackStatus,
   playbackToggle,
+  processLyrics,
   processUpload,
+  searchLyrics,
   type AppInfo,
   type LyricLine,
   type PlaybackStatus,
@@ -128,11 +130,15 @@ function App() {
         if (cancelled) return;
         markProcessingDone(track.id);
         upsertTrack(track);
-        setLyricsByTrack((prev) => {
-          const next = { ...prev };
-          delete next[track.id];
-          return next;
-        });
+        void getLyrics(track.id)
+          .then((lines) => {
+            if (cancelled) return;
+            setLyricsByTrack((prev) => ({ ...prev, [track.id]: lines }));
+          })
+          .catch(() => {
+            if (cancelled) return;
+            setLyricsByTrack((prev) => ({ ...prev, [track.id]: "error" }));
+          });
       });
 
       unlistenFailed = await onPipelineFailed((error) => {
@@ -192,8 +198,7 @@ function App() {
       const path = await pickAudioFile();
       if (!path) return;
 
-      const track = await processUpload(path);
-      setProcessingIds((prev) => new Set(prev).add(track.id));
+      await processUpload(path);
       setOpenTrackId(null);
       await refreshTracks();
     } catch (err: unknown) {
@@ -225,6 +230,25 @@ function App() {
       setLyricsByTrack((prev) => ({ ...prev, [trackId]: lines }));
     } catch {
       setLyricsByTrack((prev) => ({ ...prev, [trackId]: "error" }));
+    }
+  }
+
+  async function onSearchLyrics(trackId: number, query: string) {
+    return searchLyrics(trackId, query);
+  }
+
+  async function onProcessLyrics(
+    trackId: number,
+    pasted: string,
+    lrclibId: number | null,
+  ) {
+    setUploadError(null);
+    setProcessingIds((prev) => new Set(prev).add(trackId));
+    try {
+      await processLyrics(trackId, pasted, lrclibId);
+    } catch (err: unknown) {
+      markProcessingDone(trackId);
+      setUploadError(errorMessage(err, "Could not process lyrics"));
     }
   }
 
@@ -305,8 +329,8 @@ function App() {
         {processingCount > 0 && (
           <p className="muted">
             Processing {processingCount} track
-            {processingCount === 1 ? "" : "s"} in the background (lyrics +
-            language). You can keep using the app.
+            {processingCount === 1 ? "" : "s"} in the background. You can keep
+            using the app.
           </p>
         )}
         {uploadError && <p className="error">{uploadError}</p>}
@@ -355,6 +379,10 @@ function App() {
                   onSeekPointerDown={() => {
                     seekingRef.current = true;
                   }}
+                  onSearchLyrics={(query) => onSearchLyrics(track.id, query)}
+                  onProcessLyrics={(pasted, lrclibId) =>
+                    void onProcessLyrics(track.id, pasted, lrclibId)
+                  }
                 />
               );
             })}
