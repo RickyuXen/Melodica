@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { EditTrackPicker } from "./components/EditTrackPicker";
 import { Header, type AppTab } from "./components/Header";
+import { Settings } from "./components/Settings";
 import { TrackItem } from "./components/TrackItem";
 import type { TrackSearchState } from "./components/LyricsEditor";
 import { errorMessage } from "./lib/format";
+import { applyTheme, getStoredTheme, setStoredTheme, type Theme } from "./lib/theme";
 import {
   getAppInfo,
   getLyrics,
@@ -44,6 +46,7 @@ const emptyPlayback: PlaybackStatus = {
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
   const [connection, setConnection] = useState<ConnectionState>({
     status: "checking",
   });
@@ -67,6 +70,15 @@ function App() {
   const seekingRef = useRef(false);
 
   const connected = connection.status === "connected";
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function onThemeChange(next: Theme) {
+    setTheme(next);
+    setStoredTheme(next);
+  }
 
   async function refreshTracks() {
     setTracks(await listTracks());
@@ -553,6 +565,16 @@ function App() {
             extract and sync them.
           </p>
           {renderEditTab()}
+        </section>
+      )}
+
+      {activeTab === "settings" && (
+        <section className="panel settings">
+          <h2>Settings</h2>
+          <p className="muted settings-desc">
+            Personalize how Melodica looks while you study.
+          </p>
+          <Settings theme={theme} onThemeChange={onThemeChange} />
         </section>
       )}
     </main>

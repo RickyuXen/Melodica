@@ -1,6 +1,6 @@
-import iconUrl from "../assets/icon.svg";
+import iconUrl from "../assets/Melodica_Logo.svg";
 
-export type AppTab = "home" | "upload" | "edit";
+export type AppTab = "home" | "upload" | "edit" | "settings";
 
 type HeaderProps = {
   activeTab: AppTab;
@@ -11,6 +11,7 @@ const TABS: { id: AppTab; label: string }[] = [
   { id: "home", label: "Home" },
   { id: "upload", label: "Upload" },
   { id: "edit", label: "Edit" },
+  { id: "settings", label: "Settings" },
 ];
 
 export function Header({ activeTab, onTabChange }: HeaderProps) {
