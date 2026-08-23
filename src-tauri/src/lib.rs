@@ -1,3 +1,4 @@
+mod lrclib;
 mod pipeline;
 mod playback;
 mod sidecar;
@@ -27,19 +28,65 @@ fn app_info() -> AppInfo {
     }
 }
 
-/// Accepts a local file path from the UI, saves track metadata immediately,
-/// then finishes lyrics + language detection on a background thread.
+/// Accepts a local file path from the UI and saves track metadata immediately.
+/// Embedded lyric tags are stored if present; Whisper is not started here.
 #[tauri::command]
 fn process_upload(app: AppHandle, file_path: String) -> Result<Track, String> {
-    let track = pipeline::begin_upload(&app, &file_path)?;
-    pipeline::spawn_finish_upload(app, track.id, file_path);
-    Ok(track)
+    pipeline::begin_upload(&app, &file_path)
+}
+
+#[tauri::command]
+fn search_lyrics(
+    app: AppHandle,
+    track_id: i64,
+    query: Option<String>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_search_lyrics(app, track_id, query);
+    Ok(())
+}
+
+/// Starts lyrics processing on a background thread (paste > LRCLIB > tags > Whisper).
+#[tauri::command]
+fn process_lyrics(
+    app: AppHandle,
+    track_id: i64,
+    pasted: Option<String>,
+    lrclib_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_process_lyrics(app, track_id, pasted, lrclib_id);
+    Ok(())
 }
 
 #[tauri::command]
 fn list_tracks(app: AppHandle) -> Result<Vec<Track>, String> {
     let conn = storage::open(&app)?;
     storage::list_tracks(&conn)
+}
+
+/// Clears all tracks/lyrics (and related rows) and stops playback.
+#[tauri::command]
+fn reset_database(
+    app: AppHandle,
+    engine: State<'_, SharedPlayback>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    storage::reset_database(&conn)?;
+
+    let mut guard = engine
+        .lock()
+        .map_err(|_| "playback state poisoned".to_string())?;
+    if let Some(player) = guard.as_mut() {
+        player.stop();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -101,7 +148,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             process_upload,
+            search_lyrics,
+            process_lyrics,
             list_tracks,
+            reset_database,
             get_lyrics,
             playback_play,
             playback_toggle,

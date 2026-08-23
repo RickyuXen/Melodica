@@ -10,8 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "sidecar:install": "python -m pip install -r sidecar/requirements.txt",
-    "sidecar:dev": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload --app-dir sidecar"
+    "sidecar:install": "python3 -m pip install -r sidecar/requirements.txt",
+    "sidecar:dev": "python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload --app-dir sidecar"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

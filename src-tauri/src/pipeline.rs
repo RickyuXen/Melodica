@@ -6,8 +6,10 @@ use lofty::tag::{Accessor, ItemKey};
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
 
+use crate::lrclib::{self, LyricsMatch};
 use crate::sidecar;
 use crate::storage::{self, Track};
+use rusqlite::Connection;
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +18,23 @@ pub struct PipelineFailed {
     pub message: String,
 }
 
-/// Fast path: validate the file, save basic track metadata, return immediately.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsSearchFinished {
+    pub track_id: i64,
+    pub query: Option<String>,
+    pub matches: Vec<LyricsMatch>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsSearchFailed {
+    pub track_id: i64,
+    pub query: Option<String>,
+    pub message: String,
+}
+
+/// Fast path: validate the file, save metadata, and store embedded lyrics if present.
 pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
     let path = Path::new(file_path);
     if !path.is_file() {
@@ -26,72 +44,161 @@ pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
     let meta = read_file_metadata(path);
     let title = meta
         .title
+        .clone()
         .unwrap_or_else(|| storage::title_from_path(file_path));
 
     let conn = storage::open(app)?;
-    storage::upsert_track(
+    let track = storage::upsert_track(
         &conn,
         file_path,
         &title,
         meta.artist.as_deref(),
         meta.album.as_deref(),
         meta.duration_ms,
-    )
+    )?;
+
+    if meta.lyric_lines.is_empty() {
+        return Ok(track);
+    }
+
+    storage::replace_lyrics(&conn, track.id, &meta.lyric_lines, "embedded")?;
+    apply_detected_language(
+        &conn,
+        track.id,
+        &meta.lyric_lines,
+        meta.title.as_deref(),
+        meta.artist.as_deref(),
+        meta.album.as_deref(),
+        Some(file_path),
+        None,
+    );
+
+    storage::get_track_by_id(&conn, track.id)?
+        .ok_or_else(|| format!("track missing after upload: {}", track.id))
 }
 
-/// Slow path: lyrics extraction + language detection. Safe to run on a background thread.
-pub fn finish_upload(app: &AppHandle, track_id: i64, file_path: &str) -> Result<Track, String> {
-    let path = Path::new(file_path);
-    if !path.is_file() {
-        return Err(format!("file not found: {file_path}"));
-    }
+/// Search LRCLIB off the UI thread and emit completion events.
+pub fn spawn_search_lyrics(app: AppHandle, track_id: i64, query: Option<String>) {
+    std::thread::spawn(move || {
+        match search_lyrics(&app, track_id, query.clone()) {
+            Ok(matches) => {
+                let _ = app.emit(
+                    "lyrics-search-finished",
+                    &LyricsSearchFinished {
+                        track_id,
+                        query,
+                        matches,
+                    },
+                );
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "lyrics-search-failed",
+                    &LyricsSearchFailed {
+                        track_id,
+                        query,
+                        message,
+                    },
+                );
+            }
+        }
+    });
+}
 
+/// Search LRCLIB using a custom query, or title/artist from the stored track.
+fn search_lyrics(
+    app: &AppHandle,
+    track_id: i64,
+    query: Option<String>,
+) -> Result<Vec<LyricsMatch>, String> {
     let conn = storage::open(app)?;
-    let _track = storage::get_track_by_id(&conn, track_id)?
+    let track = storage::get_track_by_id(&conn, track_id)?
         .ok_or_else(|| format!("track not found: {track_id}"))?;
 
+    let custom = query
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    if let Some(q) = custom {
+        lrclib::search_query(q)
+    } else {
+        lrclib::search_track(&track.title, track.artist.as_deref())
+    }
+}
+
+/// Commit lyrics: pasted text, then LRCLIB id, then embedded tags, then Whisper.
+pub fn process_lyrics(
+    app: &AppHandle,
+    track_id: i64,
+    pasted: Option<String>,
+    lrclib_id: Option<i64>,
+) -> Result<Track, String> {
+    let conn = storage::open(app)?;
+    let track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+
+    let path = Path::new(&track.file_path);
+    if !path.is_file() {
+        return Err(format!("file not found: {}", track.file_path));
+    }
+
     let meta = read_file_metadata(path);
+    let pasted = pasted
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let mut whisper_language: Option<String> = None;
 
-    let lyric_lines = if !meta.lyric_lines.is_empty() {
-        storage::replace_lyrics(&conn, track_id, &meta.lyric_lines, "embedded")?;
-        meta.lyric_lines
+    let (lyric_lines, source) = if let Some(text) = pasted {
+        (split_lyric_lines(&text), "user")
+    } else if let Some(id) = lrclib_id {
+        let text = lrclib::lyrics_for_id(id)?;
+        (split_lyric_lines(&text), "lrclib")
+    } else if !meta.lyric_lines.is_empty() {
+        (meta.lyric_lines.clone(), "embedded")
     } else {
-        let asr = sidecar::transcribe(file_path)?;
+        let asr = sidecar::transcribe(
+            &track.file_path,
+            meta.title.as_deref().or(Some(track.title.as_str())),
+            meta.artist.as_deref().or(track.artist.as_deref()),
+            meta.album.as_deref().or(track.album.as_deref()),
+        )?;
         whisper_language = asr.language;
-        if !asr.lines.is_empty() {
-            storage::replace_lyrics(&conn, track_id, &asr.lines, "asr")?;
-        }
-        asr.lines
+        (asr.lines, "asr")
     };
 
-    if !lyric_lines.is_empty() {
-        let lyrics_text = lyric_lines
-            .iter()
-            .map(|(_, text)| text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let language = match sidecar::detect_language(&lyrics_text) {
-            Ok(code) => Some(code),
-            Err(_) => whisper_language,
-        };
-
-        if let Some(code) = language {
-            storage::set_language_code(&conn, track_id, &code)?;
-        }
-    } else if let Some(code) = whisper_language {
-        storage::set_language_code(&conn, track_id, &code)?;
+    if lyric_lines.is_empty() {
+        return Err("No lyrics found. Paste lyrics, pick a search match, or try Process again.".to_string());
     }
+
+    storage::replace_lyrics(&conn, track_id, &lyric_lines, source)?;
+    apply_detected_language(
+        &conn,
+        track_id,
+        &lyric_lines,
+        meta.title.as_deref().or(Some(track.title.as_str())),
+        meta.artist.as_deref().or(track.artist.as_deref()),
+        meta.album.as_deref().or(track.album.as_deref()),
+        Some(&track.file_path),
+        whisper_language,
+    );
 
     storage::get_track_by_id(&conn, track_id)?
         .ok_or_else(|| format!("track missing after pipeline: {track_id}"))
 }
 
 /// Spawn lyrics + language work off the UI thread and emit completion events.
-pub fn spawn_finish_upload(app: AppHandle, track_id: i64, file_path: String) {
+pub fn spawn_process_lyrics(
+    app: AppHandle,
+    track_id: i64,
+    pasted: Option<String>,
+    lrclib_id: Option<i64>,
+) {
     std::thread::spawn(move || {
-        match finish_upload(&app, track_id, &file_path) {
+        match process_lyrics(&app, track_id, pasted, lrclib_id) {
             Ok(track) => {
                 let _ = app.emit("pipeline-finished", &track);
             }
@@ -103,6 +210,45 @@ pub fn spawn_finish_upload(app: AppHandle, track_id: i64, file_path: String) {
             }
         }
     });
+}
+
+fn apply_detected_language(
+    conn: &Connection,
+    track_id: i64,
+    lyric_lines: &[(Option<i64>, String)],
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+    file_path: Option<&str>,
+    whisper_language: Option<String>,
+) {
+    if lyric_lines.is_empty() {
+        if let Some(code) = whisper_language {
+            let _ = storage::set_language_code(conn, track_id, &code);
+        }
+        return;
+    }
+
+    let lyrics_text = lyric_lines
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let language = match sidecar::detect_language(
+        &lyrics_text,
+        title,
+        artist,
+        album,
+        file_path,
+    ) {
+        Ok(code) => Some(code),
+        Err(_) => whisper_language,
+    };
+
+    if let Some(code) = language {
+        let _ = storage::set_language_code(conn, track_id, &code);
+    }
 }
 
 struct FileMetadata {

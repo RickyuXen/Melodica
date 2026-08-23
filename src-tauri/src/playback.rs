@@ -82,6 +82,13 @@ impl PlaybackEngine {
         self.status()
     }
 
+    pub fn stop(&mut self) -> PlaybackStatus {
+        self.player.stop();
+        self.track_id = None;
+        self.duration_ms = 0;
+        self.status()
+    }
+
     pub fn seek(&mut self, position_ms: u64) -> Result<PlaybackStatus, String> {
         if self.track_id.is_none() || self.player.empty() {
             return Err("nothing is playing".to_string());

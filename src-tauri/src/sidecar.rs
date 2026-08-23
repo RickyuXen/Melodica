@@ -9,6 +9,12 @@ const BASE_URL: &str = "http://127.0.0.1:8765";
 #[derive(Serialize)]
 struct TranscribeRequest {
     file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    album: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +33,14 @@ struct TranscribeResponse {
 #[derive(Serialize)]
 struct DetectLanguageRequest {
     text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    album: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -48,9 +62,17 @@ fn agent() -> Agent {
 }
 
 /// Ask the sidecar to transcribe a local audio file into lyric lines.
-pub fn transcribe(file_path: &str) -> Result<TranscribeResult, String> {
+pub fn transcribe(
+    file_path: &str,
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+) -> Result<TranscribeResult, String> {
     let request = TranscribeRequest {
         file_path: file_path.to_string(),
+        title: title.map(str::to_string),
+        artist: artist.map(str::to_string),
+        album: album.map(str::to_string),
     };
 
     let response = agent()
@@ -77,7 +99,13 @@ pub fn transcribe(file_path: &str) -> Result<TranscribeResult, String> {
 }
 
 /// Classify language from lyrics text via the sidecar.
-pub fn detect_language(text: &str) -> Result<String, String> {
+pub fn detect_language(
+    text: &str,
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+    file_path: Option<&str>,
+) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("no text for language detection".to_string());
@@ -85,6 +113,10 @@ pub fn detect_language(text: &str) -> Result<String, String> {
 
     let request = DetectLanguageRequest {
         text: trimmed.to_string(),
+        title: title.map(str::to_string),
+        artist: artist.map(str::to_string),
+        album: album.map(str::to_string),
+        file_path: file_path.map(str::to_string),
     };
 
     let response = agent()

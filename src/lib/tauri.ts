@@ -58,6 +58,77 @@ export async function processUpload(filePath: string): Promise<Track> {
   return invoke<Track>("process_upload", { filePath });
 }
 
+export type LyricsMatch = {
+  id: number;
+  trackName: string;
+  artistName: string;
+  albumName: string | null;
+  durationSeconds: number | null;
+  instrumental: boolean;
+  hasSynced: boolean;
+  hasPlain: boolean;
+};
+
+export async function searchLyrics(
+  trackId: number,
+  query?: string | null,
+): Promise<void> {
+  return invoke<void>("search_lyrics", {
+    trackId,
+    query: query?.trim() ? query.trim() : null,
+  });
+}
+
+export type LyricsSearchFinished = {
+  trackId: number;
+  query: string | null;
+  matches: LyricsMatch[];
+};
+
+export type LyricsSearchFailed = {
+  trackId: number;
+  query: string | null;
+  message: string;
+};
+
+export async function onLyricsSearchFinished(
+  handler: (result: LyricsSearchFinished) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LyricsSearchFinished>(
+    "lyrics-search-finished",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
+}
+
+export async function onLyricsSearchFailed(
+  handler: (error: LyricsSearchFailed) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LyricsSearchFailed>(
+    "lyrics-search-failed",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
+}
+
+export async function processLyrics(
+  trackId: number,
+  pasted?: string | null,
+  lrclibId?: number | null,
+): Promise<void> {
+  return invoke<void>("process_lyrics", {
+    trackId,
+    pasted: pasted?.trim() ? pasted : null,
+    lrclibId: lrclibId ?? null,
+  });
+}
+
 export type PipelineFailed = {
   trackId: number;
   message: string;
@@ -85,6 +156,11 @@ export async function onPipelineFailed(
 
 export async function listTracks(): Promise<Track[]> {
   return invoke<Track[]>("list_tracks");
+}
+
+/** Clears all library data in SQLite and stops playback. */
+export async function resetDatabase(): Promise<void> {
+  return invoke<void>("reset_database");
 }
 
 export async function getLyrics(trackId: number): Promise<LyricLine[]> {

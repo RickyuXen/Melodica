@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import { EditTrackPicker } from "./components/EditTrackPicker";
+import { Header, type AppTab } from "./components/Header";
+import { Settings } from "./components/Settings";
+import { TrackItem } from "./components/TrackItem";
+import type { TrackSearchState } from "./components/LyricsEditor";
+import { errorMessage } from "./lib/format";
+import { applyTheme, getStoredTheme, setStoredTheme, type Theme } from "./lib/theme";
 import {
   getAppInfo,
   getLyrics,
   listTracks,
+  onLyricsSearchFailed,
+  onLyricsSearchFinished,
   onPipelineFailed,
   onPipelineFinished,
   pickAudioFile,
@@ -10,7 +19,10 @@ import {
   playbackSeek,
   playbackStatus,
   playbackToggle,
+  processLyrics,
   processUpload,
+  resetDatabase,
+  searchLyrics,
   type AppInfo,
   type LyricLine,
   type PlaybackStatus,
@@ -23,54 +35,126 @@ type ConnectionState =
   | { status: "connected"; info: AppInfo }
   | { status: "error"; message: string };
 
-function formatTime(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0:00";
-  const totalSec = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
+type LyricsCache = Record<number, LyricLine[] | "loading" | "error">;
+type SearchCache = Record<number, TrackSearchState>;
 
-function languageLabel(code: string): string {
-  try {
-    const names = new Intl.DisplayNames(["en"], { type: "language" });
-    return names.of(code) ?? code.toUpperCase();
-  } catch {
-    return code.toUpperCase();
-  }
-}
+const emptyPlayback: PlaybackStatus = {
+  trackId: null,
+  playing: false,
+  positionMs: 0,
+  durationMs: 0,
+};
 
 function App() {
+  const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
   const [connection, setConnection] = useState<ConnectionState>({
     status: "checking",
   });
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [lyricsByTrack, setLyricsByTrack] = useState<
-    Record<number, LyricLine[] | "loading" | "error">
-  >({});
+  const [lyricsByTrack, setLyricsByTrack] = useState<LyricsCache>({});
   const [openTrackId, setOpenTrackId] = useState<number | null>(null);
+  const [selectedEditTrackId, setSelectedEditTrackId] = useState<number | null>(
+    null,
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [processingIds, setProcessingIds] = useState<Set<number>>(
     () => new Set(),
   );
-  const [playback, setPlayback] = useState<PlaybackStatus>({
-    trackId: null,
-    playing: false,
-    positionMs: 0,
-    durationMs: 0,
-  });
+  const [searchByTrack, setSearchByTrack] = useState<SearchCache>({});
+  const [playback, setPlayback] = useState<PlaybackStatus>(emptyPlayback);
   const [scrub, setScrub] = useState<{ trackId: number; ms: number } | null>(
     null,
   );
   const seekingRef = useRef(false);
 
-  async function refreshTracks() {
-    const rows = await listTracks();
-    setTracks(rows);
+  const connected = connection.status === "connected";
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function onThemeChange(next: Theme) {
+    setTheme(next);
+    setStoredTheme(next);
   }
 
+  async function onResetDatabase() {
+    await resetDatabase();
+    setTracks([]);
+    setLyricsByTrack({});
+    setOpenTrackId(null);
+    setSelectedEditTrackId(null);
+    setUploadError(null);
+    setPlaybackError(null);
+    setProcessingIds(new Set());
+    setSearchByTrack({});
+    setPlayback(emptyPlayback);
+    setScrub(null);
+    seekingRef.current = false;
+  }
+
+  async function refreshTracks() {
+    setTracks(await listTracks());
+  }
+
+  function markProcessingDone(trackId: number) {
+    setProcessingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }
+
+  function applySearchResult(
+    trackId: number,
+    query: string | null,
+    matches: TrackSearchState["matches"],
+    error: string | null,
+  ) {
+    const activeQuery = query?.trim() ?? "";
+    setSearchByTrack((prev) => {
+      const current = prev[trackId];
+      if (current?.activeQuery !== activeQuery) return prev;
+      return {
+        ...prev,
+        [trackId]: {
+          activeQuery,
+          searching: false,
+          matches,
+          error,
+        },
+      };
+    });
+  }
+
+  function upsertTrack(track: Track) {
+    setTracks((prev) => {
+      const idx = prev.findIndex((t) => t.id === track.id);
+      if (idx === -1) return [track, ...prev];
+      const next = [...prev];
+      next[idx] = track;
+      return next;
+    });
+  }
+
+  function applyPlayback(status: PlaybackStatus) {
+    setPlayback(status);
+    setScrub(null);
+    if (status.trackId != null && status.durationMs > 0) {
+      setTracks((prev) =>
+        prev.map((t) =>
+          t.id === status.trackId && (t.durationMs == null || t.durationMs <= 0)
+            ? { ...t, durationMs: status.durationMs }
+            : t,
+        ),
+      );
+    }
+  }
+
+  // Boot: reach Rust core, then load the library.
   useEffect(() => {
     let cancelled = false;
 
@@ -82,9 +166,10 @@ function App() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          const message =
-            err instanceof Error ? err.message : "Failed to reach Rust core";
-          setConnection({ status: "error", message });
+          setConnection({
+            status: "error",
+            message: errorMessage(err, "Failed to reach Rust core"),
+          });
         }
       });
 
@@ -93,44 +178,52 @@ function App() {
     };
   }, []);
 
+  // Pipeline events while connected.
   useEffect(() => {
-    if (connection.status !== "connected") return;
+    if (!connected) return;
 
     let cancelled = false;
     let unlistenFinished: (() => void) | undefined;
     let unlistenFailed: (() => void) | undefined;
+    let unlistenSearchFinished: (() => void) | undefined;
+    let unlistenSearchFailed: (() => void) | undefined;
 
     void (async () => {
       unlistenFinished = await onPipelineFinished((track) => {
         if (cancelled) return;
-        setProcessingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(track.id);
-          return next;
-        });
-        setTracks((prev) => {
-          const idx = prev.findIndex((t) => t.id === track.id);
-          if (idx === -1) return [track, ...prev];
-          const next = [...prev];
-          next[idx] = track;
-          return next;
-        });
-        setLyricsByTrack((prev) => {
-          const next = { ...prev };
-          delete next[track.id];
-          return next;
-        });
+        markProcessingDone(track.id);
+        upsertTrack(track);
+        void getLyrics(track.id)
+          .then((lines) => {
+            if (cancelled) return;
+            setLyricsByTrack((prev) => ({ ...prev, [track.id]: lines }));
+          })
+          .catch(() => {
+            if (cancelled) return;
+            setLyricsByTrack((prev) => ({ ...prev, [track.id]: "error" }));
+          });
       });
 
       unlistenFailed = await onPipelineFailed((error) => {
         if (cancelled) return;
-        setProcessingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(error.trackId);
-          return next;
-        });
+        markProcessingDone(error.trackId);
         setUploadError(error.message);
         void refreshTracks();
+      });
+
+      unlistenSearchFinished = await onLyricsSearchFinished((result) => {
+        if (cancelled) return;
+        applySearchResult(
+          result.trackId,
+          result.query,
+          result.matches,
+          null,
+        );
+      });
+
+      unlistenSearchFailed = await onLyricsSearchFailed((error) => {
+        if (cancelled) return;
+        applySearchResult(error.trackId, error.query, [], error.message);
       });
     })();
 
@@ -138,11 +231,21 @@ function App() {
       cancelled = true;
       unlistenFinished?.();
       unlistenFailed?.();
+      unlistenSearchFinished?.();
+      unlistenSearchFailed?.();
     };
-  }, [connection.status]);
+  }, [connected]);
 
+  // Clear edit selection if the track was removed from the library.
   useEffect(() => {
-    if (connection.status !== "connected") return;
+    if (selectedEditTrackId == null) return;
+    if (tracks.some((t) => t.id === selectedEditTrackId)) return;
+    setSelectedEditTrackId(null);
+  }, [tracks, selectedEditTrackId]);
+
+  // Playback position poll.
+  useEffect(() => {
+    if (!connected) return;
 
     let cancelled = false;
 
@@ -166,13 +269,13 @@ function App() {
       }
     }
 
-    poll();
+    void poll();
     const id = window.setInterval(poll, 250);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [connection.status]);
+  }, [connected]);
 
   async function onUploadClick() {
     setBusy(true);
@@ -182,13 +285,12 @@ function App() {
       const path = await pickAudioFile();
       if (!path) return;
 
-      const track = await processUpload(path);
-      setProcessingIds((prev) => new Set(prev).add(track.id));
+      await processUpload(path);
       setOpenTrackId(null);
       await refreshTracks();
+      setActiveTab("home");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setUploadError(message);
+      setUploadError(errorMessage(err, "Upload failed"));
       try {
         await refreshTracks();
       } catch {
@@ -196,6 +298,21 @@ function App() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onSelectEditTrack(trackId: number) {
+    setSelectedEditTrackId(trackId);
+
+    const cached = lyricsByTrack[trackId];
+    if (cached && cached !== "error") return;
+
+    setLyricsByTrack((prev) => ({ ...prev, [trackId]: "loading" }));
+    try {
+      const lines = await getLyrics(trackId);
+      setLyricsByTrack((prev) => ({ ...prev, [trackId]: lines }));
+    } catch {
+      setLyricsByTrack((prev) => ({ ...prev, [trackId]: "error" }));
     }
   }
 
@@ -207,9 +324,8 @@ function App() {
 
     setOpenTrackId(trackId);
 
-    if (lyricsByTrack[trackId] && lyricsByTrack[trackId] !== "error") {
-      return;
-    }
+    const cached = lyricsByTrack[trackId];
+    if (cached && cached !== "error") return;
 
     setLyricsByTrack((prev) => ({ ...prev, [trackId]: "loading" }));
     try {
@@ -217,6 +333,45 @@ function App() {
       setLyricsByTrack((prev) => ({ ...prev, [trackId]: lines }));
     } catch {
       setLyricsByTrack((prev) => ({ ...prev, [trackId]: "error" }));
+    }
+  }
+
+  async function onRequestSearch(trackId: number, query: string) {
+    const activeQuery = query.trim();
+    setSearchByTrack((prev) => ({
+      ...prev,
+      [trackId]: {
+        activeQuery,
+        searching: true,
+        matches: prev[trackId]?.matches ?? [],
+        error: null,
+      },
+    }));
+
+    try {
+      await searchLyrics(trackId, activeQuery || null);
+    } catch (err: unknown) {
+      applySearchResult(
+        trackId,
+        activeQuery,
+        [],
+        err instanceof Error ? err.message : "Could not start lyrics search.",
+      );
+    }
+  }
+
+  async function onProcessLyrics(
+    trackId: number,
+    pasted: string,
+    lrclibId: number | null,
+  ) {
+    setUploadError(null);
+    setProcessingIds((prev) => new Set(prev).add(trackId));
+    try {
+      await processLyrics(trackId, pasted, lrclibId);
+    } catch (err: unknown) {
+      markProcessingDone(trackId);
+      setUploadError(errorMessage(err, "Could not process lyrics"));
     }
   }
 
@@ -235,22 +390,7 @@ function App() {
           : await playbackPlay(track.id);
       applyPlayback(status);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setPlaybackError(message);
-    }
-  }
-
-  function applyPlayback(status: PlaybackStatus) {
-    setPlayback(status);
-    setScrub(null);
-    if (status.trackId != null && status.durationMs > 0) {
-      setTracks((prev) =>
-        prev.map((t) =>
-          t.id === status.trackId && (t.durationMs == null || t.durationMs <= 0)
-            ? { ...t, durationMs: status.durationMs }
-            : t,
-        ),
-      );
+      setPlaybackError(errorMessage(err, "Playback failed"));
     }
   }
 
@@ -261,11 +401,9 @@ function App() {
       if (playback.trackId !== track.id) {
         await playbackPlay(track.id);
       }
-      const status = await playbackSeek(valueMs);
-      applyPlayback(status);
+      applyPlayback(await playbackSeek(valueMs));
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setPlaybackError(message);
+      setPlaybackError(errorMessage(err, "Seek failed"));
     } finally {
       seekingRef.current = false;
       setScrub(null);
@@ -273,15 +411,109 @@ function App() {
   }
 
   const processingCount = processingIds.size;
+  const searchingIds = new Set(
+    Object.entries(searchByTrack)
+      .filter(([, state]) => state.searching)
+      .map(([id]) => Number(id)),
+  );
+
+  function renderTrackItem(track: Track, mode: "library" | "edit") {
+    const isCurrent = playback.trackId === track.id;
+    const durationMs =
+      (isCurrent && playback.durationMs > 0
+        ? playback.durationMs
+        : track.durationMs) ?? 0;
+    const positionMs =
+      scrub?.trackId === track.id
+        ? scrub.ms
+        : isCurrent
+          ? playback.positionMs
+          : 0;
+
+    return (
+      <TrackItem
+        key={track.id}
+        track={track}
+        mode={mode}
+        lyrics={lyricsByTrack[track.id]}
+        lyricsOpen={openTrackId === track.id}
+        isCurrent={isCurrent}
+        isProcessing={processingIds.has(track.id)}
+        playing={isCurrent && playback.playing}
+        positionMs={positionMs}
+        durationMs={durationMs}
+        canControl={connected}
+        onToggleLyrics={() => void onToggleLyrics(track.id)}
+        onPlayPause={() => void onPlayPause(track)}
+        onScrub={(ms) => setScrub({ trackId: track.id, ms })}
+        onSeekCommit={(ms) => void onSeekCommit(track, ms)}
+        onSeekCancel={() => {
+          seekingRef.current = false;
+          setScrub(null);
+        }}
+        onSeekPointerDown={() => {
+          seekingRef.current = true;
+        }}
+        searchState={searchByTrack[track.id]}
+        onRequestSearch={(query) => void onRequestSearch(track.id, query)}
+        onProcessLyrics={(pasted, lrclibId) =>
+          void onProcessLyrics(track.id, pasted, lrclibId)
+        }
+      />
+    );
+  }
+
+  function renderTrackList() {
+    if (tracks.length === 0) {
+      return (
+        <p className="muted">No tracks yet. Upload a music file to begin.</p>
+      );
+    }
+
+    return (
+      <ul className="track-list">
+        {tracks.map((track) => renderTrackItem(track, "library"))}
+      </ul>
+    );
+  }
+
+  function renderEditTab() {
+    if (tracks.length === 0) {
+      return (
+        <p className="muted">No tracks to edit yet. Upload a music file first.</p>
+      );
+    }
+
+    const selectedTrack =
+      selectedEditTrackId != null
+        ? tracks.find((t) => t.id === selectedEditTrackId)
+        : undefined;
+
+    return (
+      <>
+        <EditTrackPicker
+          tracks={tracks}
+          selectedId={selectedEditTrackId}
+          processingIds={processingIds}
+          searchingIds={searchingIds}
+          onSelect={(trackId) => void onSelectEditTrack(trackId)}
+        />
+        {selectedTrack && (
+          <div className="edit-detail">
+            <ul className="track-list">
+              {renderTrackItem(selectedTrack, "edit")}
+            </ul>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <main className="shell">
-      <header className="brand">
-        <h1>Melodica</h1>
-        <p>Learn languages through the music you already like.</p>
-      </header>
+      <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
-      <section className="status" aria-live="polite">
+      <section className="panel status" aria-live="polite">
         {connection.status === "checking" && (
           <p>Connecting to Rust core…</p>
         )}
@@ -302,161 +534,70 @@ function App() {
         )}
       </section>
 
-      <section className="upload">
-        <button
-          type="button"
-          disabled={busy || connection.status !== "connected"}
-          onClick={onUploadClick}
-        >
-          {busy ? "Adding…" : "Upload music file"}
-        </button>
-        {processingCount > 0 && (
-          <p className="muted">
-            Processing {processingCount} track
-            {processingCount === 1 ? "" : "s"} in the background (lyrics +
-            language). You can keep using the app.
+      {(uploadError || playbackError) && (
+        <section className="panel errors" aria-live="polite">
+          {uploadError && <p className="error">{uploadError}</p>}
+          {playbackError && <p className="error">{playbackError}</p>}
+        </section>
+      )}
+
+      {activeTab === "home" && (
+        <section className="panel library">
+          <h2>Library</h2>
+          {renderTrackList()}
+        </section>
+      )}
+
+      {activeTab === "upload" && (
+        <section className="panel upload">
+          <h2>Upload music</h2>
+          <p className="muted upload-desc">
+            Add audio files to your library. Supported formats include MP3,
+            FLAC, WAV, OGG, M4A, and AAC.
           </p>
-        )}
-        {uploadError && <p className="error">{uploadError}</p>}
-        {playbackError && <p className="error">{playbackError}</p>}
-      </section>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !connected}
+            onClick={onUploadClick}
+          >
+            {busy ? "Adding…" : "Choose music file"}
+          </button>
+          {processingCount > 0 && (
+            <p className="muted">
+              Processing {processingCount} track
+              {processingCount === 1 ? "" : "s"} in the background. You can keep
+              using the app.
+            </p>
+          )}
+        </section>
+      )}
 
-      <section className="library">
-        <h2>Library</h2>
-        {tracks.length === 0 ? (
-          <p className="muted">No tracks yet. Upload a music file to begin.</p>
-        ) : (
-          <ul className="track-list">
-            {tracks.map((track) => {
-              const open = openTrackId === track.id;
-              const lyrics = lyricsByTrack[track.id];
-              const isCurrent = playback.trackId === track.id;
-              const isProcessing = processingIds.has(track.id);
-              const durationMs =
-                (isCurrent && playback.durationMs > 0
-                  ? playback.durationMs
-                  : track.durationMs) ?? 0;
-              const positionMs =
-                scrub?.trackId === track.id
-                  ? scrub.ms
-                  : isCurrent
-                    ? playback.positionMs
-                    : 0;
-              const playing = isCurrent && playback.playing;
+      {activeTab === "edit" && (
+        <section className="panel edit">
+          <h2>Edit tracks</h2>
+          <p className="muted edit-desc">
+            Find, match, or paste lyrics for each track, then process to
+            extract and sync them.
+          </p>
+          {renderEditTab()}
+        </section>
+      )}
 
-              return (
-                <li key={track.id} className="track-item">
-                  <div className="track-row">
-                    <div className="track-meta">
-                      <strong>{track.title}</strong>
-                      {track.artist && (
-                        <span className="muted"> — {track.artist}</span>
-                      )}
-                      {track.languageCode && (
-                        <span className="lang-tag">
-                          {languageLabel(track.languageCode)}
-                        </span>
-                      )}
-                      {isProcessing && (
-                        <span className="processing-tag">Processing…</span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      className="lyrics-toggle"
-                      onClick={() => onToggleLyrics(track.id)}
-                    >
-                      {open ? "Hide lyrics" : "View lyrics"}
-                    </button>
-                  </div>
-
-                  <div className="player-row">
-                    <button
-                      type="button"
-                      className="play-toggle"
-                      disabled={connection.status !== "connected"}
-                      onClick={() => onPlayPause(track)}
-                      aria-label={playing ? "Pause" : "Play"}
-                    >
-                      {playing ? "Pause" : "Play"}
-                    </button>
-                    <div className="seek-wrap">
-                      <input
-                        type="range"
-                        className="seek"
-                        min={0}
-                        max={Math.max(durationMs, 1)}
-                        step={100}
-                        value={Math.min(positionMs, Math.max(durationMs, 1))}
-                        disabled={
-                          connection.status !== "connected" || durationMs <= 0
-                        }
-                        aria-label={`Seek ${track.title}`}
-                        onPointerDown={() => {
-                          seekingRef.current = true;
-                        }}
-                        onChange={(e) => {
-                          setScrub({
-                            trackId: track.id,
-                            ms: Number(e.target.value),
-                          });
-                        }}
-                        onPointerUp={(e) => {
-                          const value = Number(
-                            (e.target as HTMLInputElement).value,
-                          );
-                          void onSeekCommit(track, value);
-                        }}
-                        onPointerCancel={() => {
-                          seekingRef.current = false;
-                          setScrub(null);
-                        }}
-                        onKeyUp={(e) => {
-                          const value = Number(
-                            (e.target as HTMLInputElement).value,
-                          );
-                          void onSeekCommit(track, value);
-                        }}
-                      />
-                      <div className="seek-times" aria-hidden="true">
-                        <span>{formatTime(positionMs)}</span>
-                        <span>{formatTime(durationMs)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {open && (
-                    <div className="lyrics-panel">
-                      {isProcessing && (
-                        <p className="muted">
-                          Still extracting lyrics in the background…
-                        </p>
-                      )}
-                      {lyrics === "loading" && <p>Loading lyrics…</p>}
-                      {lyrics === "error" && (
-                        <p className="error">Could not load lyrics.</p>
-                      )}
-                      {Array.isArray(lyrics) && lyrics.length === 0 && (
-                        <p className="muted">
-                          No lyrics yet — ensure the Melodica sidecar is running
-                          for transcription (<code>npm run sidecar:dev</code>).
-                        </p>
-                      )}
-                      {Array.isArray(lyrics) && lyrics.length > 0 && (
-                        <ul className="lyrics-lines">
-                          {lyrics.map((line) => (
-                            <li key={line.id}>{line.originalText}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      {activeTab === "settings" && (
+        <section className="panel settings">
+          <h2>Settings</h2>
+          <p className="muted settings-desc">
+            Personalize how Melodica looks while you study.
+          </p>
+          <Settings
+            theme={theme}
+            onThemeChange={onThemeChange}
+            onResetDatabase={onResetDatabase}
+            canResetDatabase={connected}
+          />
+        </section>
+      )}
     </main>
   );
 }
