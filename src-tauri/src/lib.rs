@@ -71,6 +71,24 @@ fn list_tracks(app: AppHandle) -> Result<Vec<Track>, String> {
     storage::list_tracks(&conn)
 }
 
+/// Clears all tracks/lyrics (and related rows) and stops playback.
+#[tauri::command]
+fn reset_database(
+    app: AppHandle,
+    engine: State<'_, SharedPlayback>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    storage::reset_database(&conn)?;
+
+    let mut guard = engine
+        .lock()
+        .map_err(|_| "playback state poisoned".to_string())?;
+    if let Some(player) = guard.as_mut() {
+        player.stop();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_lyrics(app: AppHandle, track_id: i64) -> Result<Vec<LyricLine>, String> {
     let conn = storage::open(&app)?;
@@ -133,6 +151,7 @@ pub fn run() {
             search_lyrics,
             process_lyrics,
             list_tracks,
+            reset_database,
             get_lyrics,
             playback_play,
             playback_toggle,

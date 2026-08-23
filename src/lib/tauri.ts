@@ -158,6 +158,11 @@ export async function listTracks(): Promise<Track[]> {
   return invoke<Track[]>("list_tracks");
 }
 
+/** Clears all library data in SQLite and stops playback. */
+export async function resetDatabase(): Promise<void> {
+  return invoke<void>("reset_database");
+}
+
 export async function getLyrics(trackId: number): Promise<LyricLine[]> {
   return invoke<LyricLine[]>("get_lyrics", { trackId });
 }

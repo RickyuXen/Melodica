@@ -47,7 +47,11 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 - Line-aligned English translation (schema exists; generation is not shipped).
 - Karaoke-style line highlight synced to playback.
 - Volume control, playlists, liked tracks.
-- Bundling the sidecar so end users never install Python.
+- Bundling the sidecar so end users never install Python,
+- For audio processing:
+    - Some ML model that can help translations work better (by using LRCLIB + translation results -> some confidence score and if it's around 90% let it be used, otherwise dont)
+- Initial processing -> select option closest to timeframe from LRCLIB automatically when uploaded -> fallback on translation afterwards.
+    - Build some pipeline for songs that aren't english, to have high quality translations shown directly underneath. Each word should be shown, as well as entire meaning of the line.
 
 **Open**
 

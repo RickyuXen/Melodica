@@ -119,7 +119,12 @@ export function TrackItem({
 
       {mode === "library" && lyricsOpen && (
         <div className="lyrics-panel">
-          <LyricsDisplay lyrics={lyrics} />
+          <LyricsDisplay
+            lyrics={lyrics}
+            positionMs={positionMs}
+            isCurrent={isCurrent}
+            onSeekLine={onSeekCommit}
+          />
         </div>
       )}
 

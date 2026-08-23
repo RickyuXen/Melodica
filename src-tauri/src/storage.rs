@@ -178,6 +178,23 @@ pub fn set_language_code(
     Ok(())
 }
 
+/// Wipe all library data and reset autoincrement counters so the DB is empty.
+pub fn reset_database(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = ON;
+        DELETE FROM play_history;
+        DELETE FROM playlist_tracks;
+        DELETE FROM playlists;
+        DELETE FROM lyrics_cache;
+        DELETE FROM tracks;
+        DELETE FROM sqlite_sequence;
+        "#,
+    )
+    .map_err(|e| format!("reset database: {e}"))?;
+    Ok(())
+}
+
 pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
     let mut stmt = conn
         .prepare(

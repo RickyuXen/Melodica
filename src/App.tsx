@@ -21,6 +21,7 @@ import {
   playbackToggle,
   processLyrics,
   processUpload,
+  resetDatabase,
   searchLyrics,
   type AppInfo,
   type LyricLine,
@@ -78,6 +79,21 @@ function App() {
   function onThemeChange(next: Theme) {
     setTheme(next);
     setStoredTheme(next);
+  }
+
+  async function onResetDatabase() {
+    await resetDatabase();
+    setTracks([]);
+    setLyricsByTrack({});
+    setOpenTrackId(null);
+    setSelectedEditTrackId(null);
+    setUploadError(null);
+    setPlaybackError(null);
+    setProcessingIds(new Set());
+    setSearchByTrack({});
+    setPlayback(emptyPlayback);
+    setScrub(null);
+    seekingRef.current = false;
   }
 
   async function refreshTracks() {
@@ -574,7 +590,12 @@ function App() {
           <p className="muted settings-desc">
             Personalize how Melodica looks while you study.
           </p>
-          <Settings theme={theme} onThemeChange={onThemeChange} />
+          <Settings
+            theme={theme}
+            onThemeChange={onThemeChange}
+            onResetDatabase={onResetDatabase}
+            canResetDatabase={connected}
+          />
         </section>
       )}
     </main>
