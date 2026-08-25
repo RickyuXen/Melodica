@@ -7,6 +7,11 @@ import type { TrackSearchState } from "./components/LyricsEditor";
 import { errorMessage } from "./lib/format";
 import { applyTheme, getStoredTheme, setStoredTheme, type Theme } from "./lib/theme";
 import {
+  getStoredTranslationLanguage,
+  setStoredTranslationLanguage,
+  type TranslationLanguage,
+} from "./lib/translationLanguage";
+import {
   getAppInfo,
   getLyrics,
   listTracks,
@@ -48,6 +53,8 @@ const emptyPlayback: PlaybackStatus = {
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+  const [translationLanguage, setTranslationLanguage] =
+    useState<TranslationLanguage>(() => getStoredTranslationLanguage());
   const [connection, setConnection] = useState<ConnectionState>({
     status: "checking",
   });
@@ -79,6 +86,11 @@ function App() {
   function onThemeChange(next: Theme) {
     setTheme(next);
     setStoredTheme(next);
+  }
+
+  function onTranslationLanguageChange(next: TranslationLanguage) {
+    setTranslationLanguage(next);
+    setStoredTranslationLanguage(next);
   }
 
   async function onResetDatabase() {
@@ -588,11 +600,13 @@ function App() {
         <section className="panel settings">
           <h2>Settings</h2>
           <p className="muted settings-desc">
-            Personalize how Melodica looks while you study.
+            Personalize appearance and translation preferences.
           </p>
           <Settings
             theme={theme}
             onThemeChange={onThemeChange}
+            translationLanguage={translationLanguage}
+            onTranslationLanguageChange={onTranslationLanguageChange}
             onResetDatabase={onResetDatabase}
             canResetDatabase={connected}
           />

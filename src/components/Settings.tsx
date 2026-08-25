@@ -1,9 +1,15 @@
 import { useState } from "react";
 import type { Theme } from "../lib/theme";
+import {
+  TRANSLATION_LANGUAGES,
+  type TranslationLanguage,
+} from "../lib/translationLanguage";
 
 type SettingsProps = {
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  translationLanguage: TranslationLanguage;
+  onTranslationLanguageChange: (language: TranslationLanguage) => void;
   onResetDatabase: () => Promise<void>;
   canResetDatabase: boolean;
 };
@@ -11,6 +17,8 @@ type SettingsProps = {
 export function Settings({
   theme,
   onThemeChange,
+  translationLanguage,
+  onTranslationLanguageChange,
   onResetDatabase,
   canResetDatabase,
 }: SettingsProps) {
@@ -65,6 +73,39 @@ export function Settings({
           </span>
           <span className="theme-switch-text">{isDark ? "On" : "Off"}</span>
         </button>
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-row-copy">
+          <span className="settings-row-label" id="translation-language-label">
+            Translation language
+          </span>
+          <span className="settings-row-desc muted">
+            Language used when translating song lyrics.
+          </span>
+        </div>
+
+        <div
+          className="settings-segment"
+          role="radiogroup"
+          aria-labelledby="translation-language-label"
+        >
+          {TRANSLATION_LANGUAGES.map(({ code, label }) => {
+            const selected = translationLanguage === code;
+            return (
+              <button
+                key={code}
+                type="button"
+                role="radio"
+                className="settings-segment-option"
+                aria-checked={selected}
+                onClick={() => onTranslationLanguageChange(code)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="settings-row">
