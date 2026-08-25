@@ -111,7 +111,7 @@ React never talks to Python. Rust does, then returns structured data (original/t
 
 Right now only `/health` exists. The sidecar is not started or called by Tauri yet; you can run it separately with `npm run sidecar:dev`.
 
-Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves.
+Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves. Target packaging path: freeze the FastAPI service (e.g. PyInstaller) → register as Tauri `externalBin` → spawn/kill with the app lifecycle → ship via `tauri build` (installer or portable folder). End users should never need Node, Rust, or a manual `npm run sidecar:dev`. Details: [`PRODUCT.md`](./PRODUCT.md) (distribution intent) and [`README.md`](./README.md#distribution-end-user-packaging).
 
 ---
 

@@ -24,6 +24,8 @@ The product is not a streaming catalog or a conventional player with lyrics bolt
 
 Used on a desktop, in a Tauri window (React UI in a webview, Rust core, optional Python sidecar on localhost). The library is the user’s own files (MP3, FLAC, WAV, OGG, M4A, AAC). Playback, tags, and SQLite live on the machine. Language work (transcription, detection, later translation) is orchestrated by Rust and may call the sidecar. Internet is optional, not required for the library or player.
 
+**Distribution intent:** end users download an installable desktop app (Windows installer / equivalent on other platforms), then double-click Melodica. They never run `npm`, install Node/Rust, or start backend processes by hand. The React UI is baked into the Tauri binary at build time; Rust APIs run inside that process. The Python language sidecar is still started manually in development today; shipping it inside the app so it starts and stops with Melodica is planned (see below).
+
 Typical loop: pick a file → play/seek → open the lyrics panel, search or paste, then Process.
 
 ## Capabilities and Constraints
@@ -34,24 +36,32 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 - Users bring their own audio files. There is no streaming catalog.
 - The signature job is original lyrics plus a line-aligned translation, not a generic music player.
 - Translation target is English for now. Other target languages are later, not current product truth.
+- End-user distribution is a downloadable desktop app (Tauri installer), not a website or a repo that requires `npm run` to use.
 
 **Shipped today**
 
-- Import a local file, persist track metadata, play / pause / seek.
-- Lyrics from embedded tags, LRCLIB search/select, or user-pasted text. Whisper ASR runs only when the user Processes with no other source.
+- Tauri desktop shell with Home / Upload / Edit / Settings tabs (`npm run tauri:dev` / `tauri:build`).
+- Import a local file (MP3, FLAC, WAV, OGG, M4A, AAC), persist track metadata in SQLite, play / pause / seek.
+- Lyrics from embedded tags, LRCLIB search/select (non-blocking), or user-pasted text. Whisper ASR runs only when the user Processes with no other source.
 - Language detection from lyrics text.
-- Desktop packaging via Tauri (`npm run tauri:dev` / `tauri:build`).
+- Karaoke-style line highlight synced to playback (Home “View lyrics”), with click-to-seek on timed lines.
+- Light / dark theme and Melodica branding.
+- Settings: database reset for local library wipe.
 
 **Planned, not yet product facts**
 
 - Line-aligned English translation (schema exists; generation is not shipped).
-- Karaoke-style line highlight synced to playback.
 - Volume control, playlists, liked tracks.
-- Bundling the sidecar so end users never install Python,
-- For audio processing:
-    - Some ML model that can help translations work better (by using LRCLIB + translation results -> some confidence score and if it's around 90% let it be used, otherwise dont)
-- Initial processing -> select option closest to timeframe from LRCLIB automatically when uploaded -> fallback on translation afterwards.
-    - Build some pipeline for songs that aren't english, to have high quality translations shown directly underneath. Each word should be shown, as well as entire meaning of the line.
+- Bundle the Python sidecar so end users never install Python or run a second terminal:
+  - Freeze the FastAPI service into a platform binary (e.g. PyInstaller).
+  - Register it as a Tauri `externalBin` and spawn/kill it with the app lifecycle.
+  - Ship via `tauri:build` (NSIS/MSI on Windows, plus macOS/Linux bundles). Prefer one download → install or unzip → double-click over a literally single self-contained `.exe` that embeds Whisper weights.
+  - Whisper model may still download into app data on first ASR use (weights are large).
+- Stronger audio/lyrics pipeline:
+  - Confidence scoring over LRCLIB + translation results (prefer ~90%+ matches).
+  - On upload, auto-select the LRCLIB option closest in duration, then fall back toward translation.
+  - For non-English songs: high-quality translations under each line (per-word plus full line meaning).
+  - English-equivalent phonetic transcription.
 
 **Open**
 
@@ -67,7 +77,7 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 ## Evidence on Hand
 
 - Architecture and intent: `plan.md`, `explanation.md`, `README.md`.
-- Working prototype: library upload, playback, lyrics panel, sidecar ASR.
+- Working prototype: library upload, playback, lyrics panel, language detection, karaoke line sync, sidecar ASR.
 - App icons under `src-tauri/icons/`.
 - No testimonials, customers, benchmarks, pricing, or press. Future work must not invent them. Demonstration tracks are the user’s own files, not a fake catalog.
 
