@@ -71,7 +71,7 @@ flowchart TB
 
 Given that, lean on LRCLIB with Whisper transcription as the honest fallback for anything it doesn't have, rather than leaning on Musixmatch's preview text or scraping Genius pages.
 
-**Translation + line alignment:** prompt the LLM for structured output — a JSON array of `{original, translated}` pairs, one per line — rather than a free-flowing translated paragraph. Same pattern as pulling structured output out of a RAG pipeline, and it's what keeps the two lyric columns lined up instead of drifting apart once Japanese and English sentence structure diverge.
+**Translation + line alignment:** prompt the LLM for structured output — per document, a JSON array of lines with `{lineIndex, sense, words:[{text,gloss}]}` — rather than a free-flowing translated paragraph. The endpoint accepts **multiple lyrics documents** of the same language so future multi-song upload can batch provider calls. Word glosses sit under original tokens; `sense` is the full-line meaning.
 
 ---
 
@@ -81,7 +81,7 @@ A handful of SQLite tables cover it:
 
 ```
 tracks(id, file_path, title, artist, album, duration_ms, language_code, added_at)
-lyrics_cache(id, track_id, line_index, timestamp_ms, original_text, translated_text, source)
+lyrics_cache(id, track_id, line_index, timestamp_ms, original_text, translated_text, word_glosses, source)
 playlists(id, name, created_at)
 playlist_tracks(playlist_id, track_id, position)
 play_history(id, track_id, played_at)

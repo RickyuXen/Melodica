@@ -21,7 +21,17 @@ export type LyricLine = {
   timestampMs: number | null;
   originalText: string;
   translatedText: string | null;
+  wordGlosses: WordGloss[] | null;
   source: string;
+};
+
+export type WordGloss = {
+  text: string;
+  gloss: string;
+};
+
+export type TranslateApiKeyStatus = {
+  hasKey: boolean;
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -165,6 +175,20 @@ export async function resetDatabase(): Promise<void> {
 
 export async function getLyrics(trackId: number): Promise<LyricLine[]> {
   return invoke<LyricLine[]>("get_lyrics", { trackId });
+}
+
+export async function getTranslateApiKeyStatus(): Promise<TranslateApiKeyStatus> {
+  return invoke<TranslateApiKeyStatus>("get_translate_api_key_status");
+}
+
+/** Save or clear the Settings API key. Pass null/empty to clear (falls back to env). */
+export async function setTranslateApiKey(
+  apiKey: string | null,
+): Promise<TranslateApiKeyStatus> {
+  const trimmed = apiKey?.trim() ?? "";
+  return invoke<TranslateApiKeyStatus>("set_translate_api_key", {
+    apiKey: trimmed ? trimmed : null,
+  });
 }
 
 export type PlaybackStatus = {

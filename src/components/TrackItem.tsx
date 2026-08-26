@@ -121,6 +121,7 @@ export function TrackItem({
         <div className="lyrics-panel">
           <LyricsDisplay
             lyrics={lyrics}
+            languageCode={track.languageCode}
             positionMs={positionMs}
             isCurrent={isCurrent}
             onSeekLine={onSeekCommit}

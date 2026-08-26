@@ -89,6 +89,31 @@ fn reset_database(
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateApiKeyStatus {
+    pub has_key: bool,
+}
+
+/// Returns whether a Settings-stored translation API key exists (never the key).
+#[tauri::command]
+fn get_translate_api_key_status(app: AppHandle) -> Result<TranslateApiKeyStatus, String> {
+    let conn = storage::open(&app)?;
+    Ok(TranslateApiKeyStatus {
+        has_key: storage::get_translate_api_key(&conn)?.is_some(),
+    })
+}
+
+/// Save or clear the Settings translation API key (overrides MELODICA_TRANSLATE_API_KEY).
+#[tauri::command]
+fn set_translate_api_key(app: AppHandle, api_key: Option<String>) -> Result<TranslateApiKeyStatus, String> {
+    let conn = storage::open(&app)?;
+    storage::set_translate_api_key(&conn, api_key.as_deref())?;
+    Ok(TranslateApiKeyStatus {
+        has_key: storage::get_translate_api_key(&conn)?.is_some(),
+    })
+}
+
 #[tauri::command]
 fn get_lyrics(app: AppHandle, track_id: i64) -> Result<Vec<LyricLine>, String> {
     let conn = storage::open(&app)?;
@@ -153,6 +178,8 @@ pub fn run() {
             list_tracks,
             reset_database,
             get_lyrics,
+            get_translate_api_key_status,
+            set_translate_api_key,
             playback_play,
             playback_toggle,
             playback_seek,

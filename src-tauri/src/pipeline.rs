@@ -175,7 +175,7 @@ pub fn process_lyrics(
     }
 
     storage::replace_lyrics(&conn, track_id, &lyric_lines, source)?;
-    apply_detected_language(
+    let language_code = apply_detected_language(
         &conn,
         track_id,
         &lyric_lines,
@@ -186,8 +186,87 @@ pub fn process_lyrics(
         whisper_language,
     );
 
+    // Soft-fail: originals already saved; translation errors do not fail Process.
+    let _ = maybe_translate_lyrics(&conn, track_id, &lyric_lines, language_code.as_deref());
+
     storage::get_track_by_id(&conn, track_id)?
         .ok_or_else(|| format!("track missing after pipeline: {track_id}"))
+}
+
+const DEFAULT_TARGET_LANGUAGE: &str = "en";
+
+fn primary_language_tag(code: &str) -> String {
+    code.trim()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+fn resolve_translate_credentials(
+    conn: &Connection,
+) -> Option<sidecar::TranslateCredentials> {
+    let settings_key = storage::get_translate_api_key(conn).ok().flatten();
+    let api_key = settings_key.or_else(|| {
+        std::env::var("MELODICA_TRANSLATE_API_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    })?;
+
+    let base_url = std::env::var("MELODICA_TRANSLATE_BASE_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let model = std::env::var("MELODICA_TRANSLATE_MODEL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    Some(sidecar::TranslateCredentials {
+        api_key,
+        base_url,
+        model,
+    })
+}
+
+fn maybe_translate_lyrics(
+    conn: &Connection,
+    track_id: i64,
+    lyric_lines: &[(Option<i64>, String)],
+    language_code: Option<&str>,
+) -> Result<(), String> {
+    let target = DEFAULT_TARGET_LANGUAGE;
+    if let Some(code) = language_code {
+        if primary_language_tag(code) == target {
+            return Ok(());
+        }
+    }
+
+    let credentials = resolve_translate_credentials(conn).ok_or_else(|| {
+        "No translation API key. Set one in Settings or MELODICA_TRANSLATE_API_KEY."
+            .to_string()
+    })?;
+
+    let indexed: Vec<(i64, &str)> = lyric_lines
+        .iter()
+        .enumerate()
+        .map(|(i, (_, text))| (i as i64, text.as_str()))
+        .collect();
+
+    let translations = sidecar::translate_align(
+        &track_id.to_string(),
+        &indexed,
+        target,
+        language_code,
+        &credentials,
+    )?;
+
+    if translations.is_empty() {
+        return Err("Translation returned no lines".to_string());
+    }
+
+    storage::apply_line_translations(conn, track_id, &translations)
 }
 
 /// Spawn lyrics + language work off the UI thread and emit completion events.
@@ -221,12 +300,13 @@ fn apply_detected_language(
     album: Option<&str>,
     file_path: Option<&str>,
     whisper_language: Option<String>,
-) {
+) -> Option<String> {
     if lyric_lines.is_empty() {
         if let Some(code) = whisper_language {
             let _ = storage::set_language_code(conn, track_id, &code);
+            return Some(code);
         }
-        return;
+        return None;
     }
 
     let lyrics_text = lyric_lines
@@ -246,9 +326,10 @@ fn apply_detected_language(
         Err(_) => whisper_language,
     };
 
-    if let Some(code) = language {
-        let _ = storage::set_language_code(conn, track_id, &code);
+    if let Some(ref code) = language {
+        let _ = storage::set_language_code(conn, track_id, code);
     }
+    language
 }
 
 struct FileMetadata {

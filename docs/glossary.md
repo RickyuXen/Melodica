@@ -18,4 +18,24 @@ User action (click or keyboard activate on a timed line button) that seeks playb
 
 ## View lyrics
 
-Home Library control that expands a track’s lyric panel (`LyricsDisplay`). This is the only surface with karaoke highlight and seek-to-line.
+Home Library control that expands a track’s lyric panel (`LyricsDisplay`). This is the only surface with karaoke highlight, seek-to-line, and the dual study translation layout.
+
+## Line sense
+
+Full-sentence translation of one lyric line into the target language (English for now). Stored as `lyrics_cache.translated_text` / `LyricLine.translatedText`. Shown to the right of the word-gloss column on Home.
+
+## Word gloss
+
+Short target-language gloss for one token of the original line. Stored in `lyrics_cache.word_glosses` as JSON `[{ "text", "gloss" }, …]` and exposed as `LyricLine.wordGlosses`. Tokens are chosen by the translation model (not a separate tokenizer). Rendered directly under each original token.
+
+## Primary language tag
+
+The first subtag of a language code (`en-US` → `en`, `zh` → `zh`). Used to decide whether to skip translation when it equals the target (`en`).
+
+## translate-align
+
+Sidecar endpoint `POST /translate-align`. Accepts one or more lyrics **documents** of the same source language and returns per-line `sense` + `words` glosses. v1 Process sends one document with all lines; the multi-document shape is for future multi-song batching.
+
+## Translation API key
+
+Credential for the Google Gemini LLM provider (Flash by default). Precedence: Settings-stored key (SQLite `app_settings`) overrides environment `MELODICA_TRANSLATE_API_KEY`. Optional `MELODICA_TRANSLATE_BASE_URL` and `MELODICA_TRANSLATE_MODEL` configure the Generative Language API endpoint and model (default `gemini-3.6-flash`).

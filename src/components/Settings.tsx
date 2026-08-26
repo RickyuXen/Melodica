@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Theme } from "../lib/theme";
 import {
   TRANSLATION_LANGUAGES,
   type TranslationLanguage,
 } from "../lib/translationLanguage";
+import {
+  getTranslateApiKeyStatus,
+  setTranslateApiKey,
+} from "../lib/tauri";
 
 type SettingsProps = {
   theme: Theme;
@@ -27,6 +31,26 @@ export function Settings({
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetDone, setResetDone] = useState(false);
 
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [apiKeyBusy, setApiKeyBusy] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getTranslateApiKeyStatus()
+      .then((status) => {
+        if (!cancelled) setHasApiKey(status.hasKey);
+      })
+      .catch(() => {
+        if (!cancelled) setHasApiKey(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleReset() {
     const confirmed = window.confirm(
       "Reset the library database? This permanently deletes all tracks, lyrics, and related data. Audio files on disk are not deleted.",
@@ -45,6 +69,48 @@ export function Settings({
       );
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleSaveApiKey() {
+    setApiKeyBusy(true);
+    setApiKeyError(null);
+    setApiKeyMessage(null);
+    try {
+      const status = await setTranslateApiKey(apiKeyDraft);
+      setHasApiKey(status.hasKey);
+      setApiKeyDraft("");
+      setApiKeyMessage(
+        status.hasKey
+          ? "API key saved. It overrides MELODICA_TRANSLATE_API_KEY."
+          : "API key cleared. Melodica will use the environment variable if set.",
+      );
+    } catch (err: unknown) {
+      setApiKeyError(
+        err instanceof Error ? err.message : "Could not save API key.",
+      );
+    } finally {
+      setApiKeyBusy(false);
+    }
+  }
+
+  async function handleClearApiKey() {
+    setApiKeyBusy(true);
+    setApiKeyError(null);
+    setApiKeyMessage(null);
+    try {
+      const status = await setTranslateApiKey(null);
+      setHasApiKey(status.hasKey);
+      setApiKeyDraft("");
+      setApiKeyMessage(
+        "API key cleared. Melodica will use the environment variable if set.",
+      );
+    } catch (err: unknown) {
+      setApiKeyError(
+        err instanceof Error ? err.message : "Could not clear API key.",
+      );
+    } finally {
+      setApiKeyBusy(false);
     }
   }
 
@@ -81,7 +147,8 @@ export function Settings({
             Translation language
           </span>
           <span className="settings-row-desc muted">
-            Language used when translating song lyrics.
+            Language used when translating song lyrics. Generation currently
+            targets English; other options are reserved for later.
           </span>
         </div>
 
@@ -108,6 +175,65 @@ export function Settings({
         </div>
       </div>
 
+      <div className="settings-row settings-row-stack">
+        <div className="settings-row-copy">
+          <span className="settings-row-label" id="translate-api-key-label">
+            Translation API key
+          </span>
+          <span className="settings-row-desc muted">
+            Google Gemini API key for lyric translation (Flash by default). A
+            key saved here overrides <code>MELODICA_TRANSLATE_API_KEY</code> in
+            the environment. See the README for how to create a key.
+          </span>
+          {hasApiKey && (
+            <p className="muted settings-inline-msg">
+              A Settings key is stored (value is not shown).
+            </p>
+          )}
+          {apiKeyError && (
+            <p className="error settings-inline-msg">{apiKeyError}</p>
+          )}
+          {apiKeyMessage && !apiKeyError && (
+            <p className="muted settings-inline-msg">{apiKeyMessage}</p>
+          )}
+        </div>
+
+        <div className="settings-api-key">
+          <input
+            id="translate-api-key-input"
+            className="field"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={hasApiKey ? "••••••••••••" : "AIza…"}
+            aria-labelledby="translate-api-key-label"
+            value={apiKeyDraft}
+            disabled={apiKeyBusy || !canResetDatabase}
+            onChange={(e) => setApiKeyDraft(e.target.value)}
+          />
+          <div className="settings-api-key-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={
+                apiKeyBusy || !canResetDatabase || !apiKeyDraft.trim()
+              }
+              onClick={() => void handleSaveApiKey()}
+            >
+              {apiKeyBusy ? "Saving…" : "Save key"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={apiKeyBusy || !canResetDatabase || !hasApiKey}
+              onClick={() => void handleClearApiKey()}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="settings-row">
         <div className="settings-row-copy">
           <span className="settings-row-label" id="reset-db-label">
@@ -115,7 +241,7 @@ export function Settings({
           </span>
           <span className="settings-row-desc muted">
             Clear all tracks and lyrics from Melodica’s local database. Your
-            music files stay on disk.
+            music files stay on disk. Your translation API key is kept.
           </span>
           {resetError && <p className="error settings-inline-msg">{resetError}</p>}
           {resetDone && !resetError && (

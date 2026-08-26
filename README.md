@@ -1,8 +1,8 @@
 # Melodica
 
-Downloadable desktop music player that helps you learn a language through music you already like. Import a local audio file, play it, and follow original lyrics with a line-aligned English translation underneath (translation generation is still on the roadmap).
+Downloadable desktop music player that helps you learn a language through music you already like. Import a local audio file, play it, and follow original lyrics with per-word English glosses and a full-sentence English sense beside each line.
 
-Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes: [`plan.md`](./plan.md).
+Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes: [`plan.md`](./plan.md). Pipeline flowchart: [`flow.md`](./flow.md).
 
 ## Layout
 
@@ -10,7 +10,7 @@ Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes
 |------|------|
 | `src/` | React + TypeScript UI (Tauri webview) |
 | `src-tauri/` | Rust core — playback, tags, SQLite, LRCLIB, IPC |
-| `sidecar/` | Python FastAPI language service (Whisper ASR) |
+| `sidecar/` | Python FastAPI language service (Whisper ASR, translate-align) |
 | `docs/` | Glossary and ADRs |
 
 ## Prerequisites
@@ -18,7 +18,33 @@ Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes
 - Node.js 18+
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
 - **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload (`link.exe` must be on PATH)
-- Python 3.10+ (required for ASR when Process has no pasted lyrics, no LRCLIB match, and no embedded tags)
+- Python 3.10+ (required for ASR and translation via the sidecar)
+- A Google Gemini API key for lyric translation (see below)
+
+## Translation API key
+
+Process translates non-English lyrics through Google’s **Gemini Flash** API (`gemini-3.6-flash` by default).
+
+### How to get a Gemini API key
+
+1. Open [Google AI Studio](https://aistudio.google.com/apikey) and sign in with a Google account.
+2. Click **Create API key** (create or pick a Google Cloud project if prompted).
+3. Copy the key once and store it somewhere safe.
+
+### Configure the key
+
+**Option A — Settings (recommended):** In Melodica, open **Settings → Translation API key**, paste the Gemini key, and click **Save key**. A Settings key **overrides** the environment variable.
+
+**Option B — Environment variable** (used when no Settings key is stored):
+
+```bash
+export MELODICA_TRANSLATE_API_KEY="AIza..."
+# optional overrides:
+export MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+export MELODICA_TRANSLATE_MODEL="gemini-3.6-flash"
+```
+
+Start `tauri:dev` / the sidecar in shells that inherit these variables if you rely on Option B.
 
 ## Run the desktop app
 
@@ -27,14 +53,14 @@ npm install
 npm run tauri:dev
 ```
 
-For transcription fallback (Process with no pasted lyrics and no selected match), also start the sidecar in another terminal:
+For transcription and translation, also start the sidecar in another terminal:
 
 ```bash
 npm run sidecar:install
 npm run sidecar:dev
 ```
 
-First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe` and stores lines with `source=asr`. LRCLIB lookup and pasted lyrics run from the Rust core and do not need the sidecar.
+First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe`. After originals + language detection, Process calls `POST /translate-align` when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
 
 Build installers with:
 
@@ -63,6 +89,8 @@ Bound to `127.0.0.1:8765`.
 
 - `GET /health`
 - `POST /transcribe` — `{ "file_path": "..." }` → lyric segments
+- `POST /detect-language` — lyrics text → language code
+- `POST /translate-align` — multi-document lyrics → per-line `sense` + `words` glosses (Gemini Flash)
 
 ## Current scope
 
@@ -73,18 +101,16 @@ Bound to `127.0.0.1:8765`.
 - Lyrics from embedded tags (`lofty`), LRCLIB search/select (non-blocking), or user-pasted text
 - Whisper ASR fallback via the Python sidecar when Process has no other lyrics source
 - Language detection from lyrics text
-- Karaoke-style line highlight synced to playback (Home “View lyrics”), with click-to-seek on timed lines
+- Process-time English translation: word glosses + sentence sense (skip when source is English; soft-fail on errors)
+- Home “View lyrics”: karaoke sync/seek and dual study layout
+- Settings: theme, translation language preference, translation API key, database reset
 - Light / dark theme and Melodica branding
-- Settings: database reset for local library wipe
 
 ### Planned (source of truth: [`PRODUCT.md`](./PRODUCT.md))
 
-- Line-aligned English translation (schema exists; generation not shipped)
+- Additional translation target languages beyond English
+- Offline / local LLM behind the same provider interface
 - Volume control, playlists, liked tracks
 - Bundle the sidecar as a Tauri `externalBin` (see [Distribution](#distribution-end-user-packaging)) so end users never install Python
-- Stronger audio/lyrics pipeline:
-  - Confidence scoring over LRCLIB + translation results (prefer ~90%+ matches)
-  - On upload, auto-select the LRCLIB option closest in duration, then fall back toward translation
-  - For non-English songs: high-quality translations under each line (per-word plus full line meaning)
-  - English-equivalent phonetic transcription
-- Open: whether translation stays fully offline (local LLM) or may use a cloud provider behind a swappable interface; accessibility standard TBD
+- Stronger audio/lyrics pipeline (confidence scoring, smarter LRCLIB pick on upload, multi-song translate batching, phonetics)
+- Accessibility standard TBD

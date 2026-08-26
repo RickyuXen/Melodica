@@ -1,6 +1,7 @@
 """Melodica language sidecar — FastAPI.
 
-Bound to localhost only. Provides ASR transcription and language detection.
+Bound to localhost only. Provides ASR transcription, language detection,
+and multi-document lyric translation with word glosses.
 """
 
 from __future__ import annotations
@@ -17,6 +18,10 @@ from .language import (
     metadata_blob,
     script_language,
     whisper_language_code,
+)
+from .translate import (
+    TranslateAlignRequest,
+    translate_align,
 )
 
 _model = None
@@ -185,5 +190,26 @@ def _mean_logprob(audio, language: str) -> float:
     return sum(scores) / len(scores)
 
 
-# Future endpoints (see plan.md):
-# - POST /translate-align
+@app.post("/translate-align")
+def translate_align_endpoint(req: TranslateAlignRequest) -> dict:
+    """Translate one or more same-language lyrics documents into the target.
+
+    Each line returns word glosses plus a full-sentence sense. Accepts multiple
+    documents so future multi-song upload can batch provider calls.
+    """
+    if not req.documents:
+        raise HTTPException(status_code=400, detail="documents must not be empty")
+    for doc in req.documents:
+        if not doc.lines:
+            raise HTTPException(
+                status_code=400, detail=f"document {doc.id} has no lines"
+            )
+
+    try:
+        result = translate_align(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return result.model_dump(by_alias=True)
