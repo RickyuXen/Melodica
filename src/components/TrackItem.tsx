@@ -25,6 +25,10 @@ type TrackItemProps = {
   searchState: TrackSearchState | undefined;
   onRequestSearch: (query: string) => void;
   onProcessLyrics: (pasted: string, lrclibId: number | null) => void;
+  onSetLanguage: (languageCode: string | null, lrclibId: number | null) => void;
+  onPreviewLanguage: (lrclibId: number | null) => void;
+  isDetectingLanguage: boolean;
+  languagePreviewWarning: string | null;
 };
 
 export function TrackItem({
@@ -47,6 +51,10 @@ export function TrackItem({
   searchState,
   onRequestSearch,
   onProcessLyrics,
+  onSetLanguage,
+  onPreviewLanguage,
+  isDetectingLanguage,
+  languagePreviewWarning,
 }: TrackItemProps) {
   const seekMax = Math.max(durationMs, 1);
 
@@ -134,11 +142,17 @@ export function TrackItem({
           trackId={track.id}
           trackTitle={track.title}
           trackArtist={track.artist}
+          languageCode={track.languageCode}
+          languageManual={track.languageManual}
           lyrics={lyrics}
           isProcessing={isProcessing}
+          isDetectingLanguage={isDetectingLanguage}
+          languagePreviewWarning={languagePreviewWarning}
           searchState={searchState}
           onRequestSearch={onRequestSearch}
           onProcessLyrics={onProcessLyrics}
+          onSetLanguage={onSetLanguage}
+          onPreviewLanguage={onPreviewLanguage}
         />
       )}
     </li>

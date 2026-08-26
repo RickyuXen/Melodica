@@ -23,7 +23,7 @@ Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes
 
 ## Translation API key
 
-Process translates non-English lyrics through Google’s **Gemini Flash** API (`gemini-3.6-flash` by default).
+Process translates non-English lyrics through Google’s **Gemini Flash** API (`gemini-3.1-flash-lite` by default).
 
 ### How to get a Gemini API key
 
@@ -41,7 +41,7 @@ Process translates non-English lyrics through Google’s **Gemini Flash** API (`
 export MELODICA_TRANSLATE_API_KEY="AIza..."
 # optional overrides:
 export MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
-export MELODICA_TRANSLATE_MODEL="gemini-3.6-flash"
+export MELODICA_TRANSLATE_MODEL="gemini-3.1-flash-lite"
 ```
 
 Start `tauri:dev` / the sidecar in shells that inherit these variables if you rely on Option B.
@@ -60,7 +60,7 @@ npm run sidecar:install
 npm run sidecar:dev
 ```
 
-First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe`. After originals + language detection, Process calls `POST /translate-align` when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
+First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe`. Selecting an LRCLIB match runs select-time `POST /detect-language` (no lyrics persist). After Process saves originals, it re-detects when language is not manual, then calls `POST /translate-align` when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
 
 Build installers with:
 
@@ -100,7 +100,7 @@ Bound to `127.0.0.1:8765`.
 - Library import for local audio (MP3, FLAC, WAV, OGG, M4A, AAC), SQLite persistence, play / pause / seek
 - Lyrics from embedded tags (`lofty`), LRCLIB search/select (non-blocking), or user-pasted text
 - Whisper ASR fallback via the Python sidecar when Process has no other lyrics source
-- Language detection from lyrics text
+- Select-time language detection on LRCLIB match select; Song language override is preference-only until Process
 - Process-time English translation: word glosses + sentence sense (skip when source is English; soft-fail on errors)
 - Home “View lyrics”: karaoke sync/seek and dual study layout
 - Settings: theme, translation language preference, translation API key, database reset

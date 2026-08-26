@@ -15,7 +15,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 _DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-_DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+_DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 
 class WordGloss(BaseModel):

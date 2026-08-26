@@ -15,6 +15,8 @@ import {
   getAppInfo,
   getLyrics,
   listTracks,
+  onLanguagePreviewFailed,
+  onLanguagePreviewFinished,
   onLyricsSearchFailed,
   onLyricsSearchFinished,
   onPipelineFailed,
@@ -24,10 +26,12 @@ import {
   playbackSeek,
   playbackStatus,
   playbackToggle,
+  previewLrclibLanguage,
   processLyrics,
   processUpload,
   resetDatabase,
   searchLyrics,
+  setTrackLanguage,
   type AppInfo,
   type LyricLine,
   type PlaybackStatus,
@@ -70,6 +74,11 @@ function App() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [detectingLanguageIds, setDetectingLanguageIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [languagePreviewWarningByTrack, setLanguagePreviewWarningByTrack] =
+    useState<Record<number, string | null>>({});
   const [searchByTrack, setSearchByTrack] = useState<SearchCache>({});
   const [playback, setPlayback] = useState<PlaybackStatus>(emptyPlayback);
   const [scrub, setScrub] = useState<{ trackId: number; ms: number } | null>(
@@ -102,6 +111,8 @@ function App() {
     setUploadError(null);
     setPlaybackError(null);
     setProcessingIds(new Set());
+    setDetectingLanguageIds(new Set());
+    setLanguagePreviewWarningByTrack({});
     setSearchByTrack({});
     setPlayback(emptyPlayback);
     setScrub(null);
@@ -114,6 +125,14 @@ function App() {
 
   function markProcessingDone(trackId: number) {
     setProcessingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }
+
+  function markDetectingDone(trackId: number) {
+    setDetectingLanguageIds((prev) => {
       const next = new Set(prev);
       next.delete(trackId);
       return next;
@@ -199,6 +218,8 @@ function App() {
     let unlistenFailed: (() => void) | undefined;
     let unlistenSearchFinished: (() => void) | undefined;
     let unlistenSearchFailed: (() => void) | undefined;
+    let unlistenPreviewFinished: (() => void) | undefined;
+    let unlistenPreviewFailed: (() => void) | undefined;
 
     void (async () => {
       unlistenFinished = await onPipelineFinished((track) => {
@@ -237,6 +258,26 @@ function App() {
         if (cancelled) return;
         applySearchResult(error.trackId, error.query, [], error.message);
       });
+
+      unlistenPreviewFinished = await onLanguagePreviewFinished((result) => {
+        if (cancelled) return;
+        markDetectingDone(result.track.id);
+        upsertTrack(result.track);
+        setLanguagePreviewWarningByTrack((prev) => ({
+          ...prev,
+          [result.track.id]: result.warning,
+        }));
+      });
+
+      unlistenPreviewFailed = await onLanguagePreviewFailed((error) => {
+        if (cancelled) return;
+        markDetectingDone(error.trackId);
+        setLanguagePreviewWarningByTrack((prev) => ({
+          ...prev,
+          [error.trackId]: error.message,
+        }));
+        void refreshTracks();
+      });
     })();
 
     return () => {
@@ -245,6 +286,8 @@ function App() {
       unlistenFailed?.();
       unlistenSearchFinished?.();
       unlistenSearchFailed?.();
+      unlistenPreviewFinished?.();
+      unlistenPreviewFailed?.();
     };
   }, [connected]);
 
@@ -387,6 +430,43 @@ function App() {
     }
   }
 
+  async function onSetLanguage(
+    trackId: number,
+    languageCode: string | null,
+    lrclibId: number | null,
+  ) {
+    setUploadError(null);
+    setLanguagePreviewWarningByTrack((prev) => ({ ...prev, [trackId]: null }));
+    const isAuto = !languageCode?.trim();
+    if (isAuto && lrclibId != null) {
+      setDetectingLanguageIds((prev) => new Set(prev).add(trackId));
+    }
+    try {
+      await setTrackLanguage(
+        trackId,
+        languageCode,
+        isAuto ? lrclibId : null,
+      );
+    } catch (err: unknown) {
+      markDetectingDone(trackId);
+      setUploadError(errorMessage(err, "Could not update song language"));
+    }
+  }
+
+  async function onPreviewLanguage(trackId: number, lrclibId: number | null) {
+    setLanguagePreviewWarningByTrack((prev) => ({ ...prev, [trackId]: null }));
+    setDetectingLanguageIds((prev) => new Set(prev).add(trackId));
+    try {
+      await previewLrclibLanguage(trackId, lrclibId);
+    } catch (err: unknown) {
+      markDetectingDone(trackId);
+      setLanguagePreviewWarningByTrack((prev) => ({
+        ...prev,
+        [trackId]: errorMessage(err, "Could not detect language"),
+      }));
+    }
+  }
+
   async function onPlayPause(track: Track) {
     setPlaybackError(null);
     try {
@@ -470,6 +550,16 @@ function App() {
         onRequestSearch={(query) => void onRequestSearch(track.id, query)}
         onProcessLyrics={(pasted, lrclibId) =>
           void onProcessLyrics(track.id, pasted, lrclibId)
+        }
+        onSetLanguage={(languageCode, lrclibId) =>
+          void onSetLanguage(track.id, languageCode, lrclibId)
+        }
+        onPreviewLanguage={(lrclibId) =>
+          void onPreviewLanguage(track.id, lrclibId)
+        }
+        isDetectingLanguage={detectingLanguageIds.has(track.id)}
+        languagePreviewWarning={
+          languagePreviewWarningByTrack[track.id] ?? null
         }
       />
     );

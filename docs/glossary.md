@@ -38,4 +38,12 @@ Sidecar endpoint `POST /translate-align`. Accepts one or more lyrics **documents
 
 ## Translation API key
 
-Credential for the Google Gemini LLM provider (Flash by default). Precedence: Settings-stored key (SQLite `app_settings`) overrides environment `MELODICA_TRANSLATE_API_KEY`. Optional `MELODICA_TRANSLATE_BASE_URL` and `MELODICA_TRANSLATE_MODEL` configure the Generative Language API endpoint and model (default `gemini-3.6-flash`).
+Credential for the Google Gemini LLM provider (Flash by default). Precedence: Settings-stored key (SQLite `app_settings`) overrides environment `MELODICA_TRANSLATE_API_KEY`. Optional `MELODICA_TRANSLATE_BASE_URL` and `MELODICA_TRANSLATE_MODEL` configure the Generative Language API endpoint and model (default `gemini-3.1-flash-lite`).
+
+## Select-time detection
+
+On Edit, when the user selects an LRCLIB matching song (including the auto-selected first result), Melodica fetches that match’s lyrics and runs language detection **without** writing `lyrics_cache`. The result is stored on `tracks.language_code` with `language_manual=false` and shown in Song language. Soft-fails leave the code empty and show a hint. Manual overrides are sticky until Auto-detect. Lyrics persist and translation run only on **Process**.
+
+## Process (lyrics pipeline)
+
+Edit action that commits lyrics then translation: resolve source (paste > LRCLIB id > embedded tags > Whisper) → save originals to `lyrics_cache` → re-detect language when not manual → `translate-align` for non-English (soft-fail). Song language changes alone never Process.

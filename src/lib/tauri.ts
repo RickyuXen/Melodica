@@ -11,6 +11,7 @@ export type Track = {
   album: string | null;
   durationMs: number | null;
   languageCode: string | null;
+  languageManual: boolean;
   addedAt: string;
 };
 
@@ -137,6 +138,68 @@ export async function processLyrics(
     pasted: pasted?.trim() ? pasted : null,
     lrclibId: lrclibId ?? null,
   });
+}
+
+/** Set song language from Edit. Pass null/empty for auto-detect (preference only).
+ *  Optional lrclibId re-runs select-time detect when choosing Auto. */
+export async function setTrackLanguage(
+  trackId: number,
+  languageCode?: string | null,
+  lrclibId?: number | null,
+): Promise<void> {
+  const trimmed = languageCode?.trim() ?? "";
+  return invoke<void>("set_track_language", {
+    trackId,
+    languageCode: trimmed ? trimmed : null,
+    lrclibId: lrclibId ?? null,
+  });
+}
+
+/** Select-time LRCLIB fetch + language detect. Does not persist lyrics. */
+export async function previewLrclibLanguage(
+  trackId: number,
+  lrclibId?: number | null,
+): Promise<void> {
+  return invoke<void>("preview_lrclib_language", {
+    trackId,
+    lrclibId: lrclibId ?? null,
+  });
+}
+
+export type LanguagePreviewFinished = {
+  track: Track;
+  warning: string | null;
+};
+
+export type LanguagePreviewFailed = {
+  trackId: number;
+  message: string;
+};
+
+export async function onLanguagePreviewFinished(
+  handler: (result: LanguagePreviewFinished) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LanguagePreviewFinished>(
+    "language-preview-finished",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
+}
+
+export async function onLanguagePreviewFailed(
+  handler: (error: LanguagePreviewFailed) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<LanguagePreviewFailed>(
+    "language-preview-failed",
+    (event) => {
+      handler(event.payload);
+    },
+  );
+  return unlisten;
 }
 
 export type PipelineFailed = {

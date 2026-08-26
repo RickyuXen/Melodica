@@ -1,6 +1,6 @@
 # Current pipeline
 
-What Melodica does today, from file to lyrics on screen (including translation after Process).
+What Melodica does today, from file to lyrics on screen (including select-time language detect and translation after Process).
 
 ```mermaid
 flowchart TD
@@ -9,9 +9,11 @@ flowchart TD
   embedded{File has lyric tags?}
   showTags[Store those lyrics]
   play[Play / pause / seek]
-  panel[Open lyrics panel]
+  panel[Open Edit lyrics panel]
   search[Search LRCLIB]
   pick[Pick a match or paste lyrics]
+  selectDetect[Select-time: fetch match text + detect language]
+  showLang[Show auto-detected language / allow override]
   process[Process]
   source{What did the user give?}
   user[Use pasted text]
@@ -19,7 +21,7 @@ flowchart TD
   tags[Use embedded tags]
   whisper[Whisper transcription]
   saveOrig[Save originals to lyrics_cache]
-  detect[Detect language from the lyrics text]
+  detect[Re-detect language if not manual]
   skip{primaryTag equals target en?}
   translate[Sidecar translate-align]
   saveTx[Write sense + word_glosses]
@@ -29,7 +31,10 @@ flowchart TD
   upload --> meta --> embedded
   embedded -->|yes| showTags --> play
   embedded -->|no| play
-  play --> panel --> search --> pick --> process --> source
+  play --> panel --> search --> pick
+  pick -->|LRCLIB match selected| selectDetect --> showLang
+  pick -->|paste or None| showLang
+  showLang --> process --> source
   source -->|pasted text| user
   source -->|selected match| lrclib
   source -->|neither, tags exist| tags
@@ -47,9 +52,11 @@ flowchart TD
 
 Process order: **paste > LRCLIB match > embedded tags > Whisper**.
 
+Select-time detect runs on LRCLIB match select only (not paste). It does **not** write lyrics. Song language override is preference-only until Process.
+
 ## Line-aligned translation (as of Process)
 
-After originals are stored and language is detected:
+After originals are stored and language is resolved (manual override, or re-detect when not manual):
 
 - **Skip** when the primary language tag equals the target (`en` for now).
 - Otherwise call the sidecar `POST /translate-align` with **one lyrics document containing all lines** (the API accepts **multiple same-language documents** for future multi-song upload batching).

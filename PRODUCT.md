@@ -26,7 +26,7 @@ Used on a desktop, in a Tauri window (React UI in a webview, Rust core, optional
 
 **Distribution intent:** end users download an installable desktop app (Windows installer / equivalent on other platforms), then double-click Melodica. They never run `npm`, install Node/Rust, or start backend processes by hand. The React UI is baked into the Tauri binary at build time; Rust APIs run inside that process. The Python language sidecar is still started manually in development today; shipping it inside the app so it starts and stops with Melodica is planned (see below).
 
-Typical loop: pick a file → play/seek → open the lyrics panel, search or paste, then Process (lyrics + translation when needed).
+Typical loop: pick a file → play/seek → open the lyrics panel, search or paste, confirm or override auto-detected language after an LRCLIB match, then Process (lyrics + translation when needed).
 
 ## Capabilities and Constraints
 
@@ -43,8 +43,8 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 - Tauri desktop shell with Home / Upload / Edit / Settings tabs (`npm run tauri:dev` / `tauri:build`).
 - Import a local file (MP3, FLAC, WAV, OGG, M4A, AAC), persist track metadata in SQLite, play / pause / seek.
 - Lyrics from embedded tags, LRCLIB search/select (non-blocking), or user-pasted text. Whisper ASR runs only when the user Processes with no other source.
-- Language detection from lyrics text.
-- After Process: for non-English (or unknown) lyrics, sidecar translation writes per-line English sense (`translated_text`) and word glosses (`word_glosses`); English source language skips translation.
+- Select-time language detection when an LRCLIB match is chosen (including auto-select); Song language shows auto-detected code and allows override without Processing. Paste waits for Process-time detect.
+- After Process: save lyrics, re-detect when not manual, then for non-English (or unknown) lyrics sidecar translation writes per-line English sense (`translated_text`) and word glosses (`word_glosses`); English source language skips translation.
 - Home “View lyrics”: karaoke-style line highlight and seek, plus dual study layout (glosses under tokens, sense to the right). Soft-fail leaves originals if translation fails.
 - Translation API key: Settings (overrides env) or `MELODICA_TRANSLATE_API_KEY`.
 - Light / dark theme and Melodica branding.
@@ -65,6 +65,7 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
   - On upload, auto-select the LRCLIB option closest in duration, then fall back toward translation.
   - Multi-song upload that batches same-language tracks into one `translate-align` call.
   - English-equivalent phonetic transcription.
+- Multi uploads of songs -> use auto detect only, send in multiple songs for a single call.
 
 **Open**
 

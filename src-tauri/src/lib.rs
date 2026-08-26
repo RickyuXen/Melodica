@@ -65,6 +65,39 @@ fn process_lyrics(
     Ok(())
 }
 
+/// Set or clear song language from Edit. Pass null/empty for auto-detect.
+/// Preference only (no translation). Optional lrclib_id re-runs select-time detect on Auto.
+/// Emits pipeline-finished/failed; Auto+match also emits language-preview-finished.
+#[tauri::command]
+fn set_track_language(
+    app: AppHandle,
+    track_id: i64,
+    language_code: Option<String>,
+    lrclib_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_set_track_language(app, track_id, language_code, lrclib_id);
+    Ok(())
+}
+
+/// Select-time LRCLIB fetch + language detect (no lyrics persist). Soft-fails via events.
+#[tauri::command]
+fn preview_lrclib_language(
+    app: AppHandle,
+    track_id: i64,
+    lrclib_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = storage::open(&app)?;
+    if storage::get_track_by_id(&conn, track_id)?.is_none() {
+        return Err(format!("track not found: {track_id}"));
+    }
+    pipeline::spawn_preview_lrclib_language(app, track_id, lrclib_id);
+    Ok(())
+}
+
 #[tauri::command]
 fn list_tracks(app: AppHandle) -> Result<Vec<Track>, String> {
     let conn = storage::open(&app)?;
@@ -175,6 +208,8 @@ pub fn run() {
             process_upload,
             search_lyrics,
             process_lyrics,
+            set_track_language,
+            preview_lrclib_language,
             list_tracks,
             reset_database,
             get_lyrics,

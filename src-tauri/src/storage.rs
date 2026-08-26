@@ -15,6 +15,8 @@ pub struct Track {
     pub album: Option<String>,
     pub duration_ms: Option<i64>,
     pub language_code: Option<String>,
+    /// True when the user set language in Edit (Process must not overwrite).
+    pub language_manual: bool,
     pub added_at: String,
 }
 
@@ -75,6 +77,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             album TEXT,
             duration_ms INTEGER,
             language_code TEXT,
+            language_manual INTEGER NOT NULL DEFAULT 0,
             added_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -119,6 +122,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     // Existing installs may lack word_glosses; ignore duplicate-column errors.
     let _ = conn.execute(
         "ALTER TABLE lyrics_cache ADD COLUMN word_glosses TEXT",
+        [],
+    );
+
+    // Manual language override from Edit; ignore if column already exists.
+    let _ = conn.execute(
+        "ALTER TABLE tracks ADD COLUMN language_manual INTEGER NOT NULL DEFAULT 0",
         [],
     );
 
@@ -221,17 +230,57 @@ pub fn set_language_code(
     conn: &Connection,
     track_id: i64,
     language_code: &str,
+    manual: bool,
 ) -> Result<(), String> {
     let updated = conn
         .execute(
-            "UPDATE tracks SET language_code = ?1 WHERE id = ?2",
-            params![language_code, track_id],
+            "UPDATE tracks SET language_code = ?1, language_manual = ?2 WHERE id = ?3",
+            params![language_code, if manual { 1 } else { 0 }, track_id],
         )
         .map_err(|e| format!("update language: {e}"))?;
 
     if updated == 0 {
         return Err(format!("track not found: {track_id}"));
     }
+    Ok(())
+}
+
+pub fn clear_language_manual(conn: &Connection, track_id: i64) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE tracks SET language_manual = 0 WHERE id = ?1",
+            params![track_id],
+        )
+        .map_err(|e| format!("clear language manual: {e}"))?;
+
+    if updated == 0 {
+        return Err(format!("track not found: {track_id}"));
+    }
+    Ok(())
+}
+
+/// Clear `language_code` (used when switching LRCLIB matches before Process).
+pub fn clear_language_code(conn: &Connection, track_id: i64) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE tracks SET language_code = NULL WHERE id = ?1",
+            params![track_id],
+        )
+        .map_err(|e| format!("clear language code: {e}"))?;
+
+    if updated == 0 {
+        return Err(format!("track not found: {track_id}"));
+    }
+    Ok(())
+}
+
+/// Drop sense/gloss columns so a language change does not leave stale help text.
+pub fn clear_line_translations(conn: &Connection, track_id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE lyrics_cache SET translated_text = NULL, word_glosses = NULL WHERE track_id = ?1",
+        params![track_id],
+    )
+    .map_err(|e| format!("clear lyric translations: {e}"))?;
     Ok(())
 }
 
@@ -300,7 +349,8 @@ pub fn reset_database(conn: &Connection) -> Result<(), String> {
 pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+            "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                    language_manual, added_at
              FROM tracks
              ORDER BY added_at DESC, id DESC",
         )
@@ -361,7 +411,8 @@ fn parse_word_glosses(raw: Option<String>) -> Option<Vec<WordGloss>> {
 
 fn get_track_by_path(conn: &Connection, file_path: &str) -> Result<Option<Track>, String> {
     conn.query_row(
-        "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
          FROM tracks WHERE file_path = ?1",
         params![file_path],
         map_track,
@@ -372,7 +423,8 @@ fn get_track_by_path(conn: &Connection, file_path: &str) -> Result<Option<Track>
 
 pub fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, String> {
     conn.query_row(
-        "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
          FROM tracks WHERE id = ?1",
         params![id],
         map_track,
@@ -382,6 +434,7 @@ pub fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, Stri
 }
 
 fn map_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
+    let language_manual: i64 = row.get(7)?;
     Ok(Track {
         id: row.get(0)?,
         file_path: row.get(1)?,
@@ -390,7 +443,8 @@ fn map_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         album: row.get(4)?,
         duration_ms: row.get(5)?,
         language_code: row.get(6)?,
-        added_at: row.get(7)?,
+        language_manual: language_manual != 0,
+        added_at: row.get(8)?,
     })
 }
 

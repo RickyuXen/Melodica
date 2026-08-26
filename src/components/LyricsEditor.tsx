@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LyricLine, LyricsMatch } from "../lib/tauri";
-import { formatTime } from "../lib/format";
+import { formatTime, languageLabel } from "../lib/format";
+import { SONG_LANGUAGES } from "../lib/songLanguage";
 
 type LyricsState = LyricLine[] | "loading" | "error" | undefined;
 
@@ -15,22 +16,34 @@ type LyricsEditorProps = {
   trackId: number;
   trackTitle: string;
   trackArtist: string | null;
+  languageCode: string | null;
+  languageManual: boolean;
   lyrics: LyricsState;
   isProcessing: boolean;
+  isDetectingLanguage: boolean;
+  languagePreviewWarning: string | null;
   searchState: TrackSearchState | undefined;
   onRequestSearch: (query: string) => void;
   onProcessLyrics: (pasted: string, lrclibId: number | null) => void;
+  onSetLanguage: (languageCode: string | null, lrclibId: number | null) => void;
+  onPreviewLanguage: (lrclibId: number | null) => void;
 };
 
 export function LyricsEditor({
   trackId,
   trackTitle,
   trackArtist,
+  languageCode,
+  languageManual,
   lyrics,
   isProcessing,
+  isDetectingLanguage,
+  languagePreviewWarning,
   searchState,
   onRequestSearch,
   onProcessLyrics,
+  onSetLanguage,
+  onPreviewLanguage,
 }: LyricsEditorProps) {
   const defaultQuery = useMemo(
     () => [trackTitle, trackArtist].filter(Boolean).join(" "),
@@ -41,12 +54,26 @@ export function LyricsEditor({
   const [pasted, setPasted] = useState("");
   const searchedRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
+  const prevSelectedRef = useRef<number | null | undefined>(undefined);
 
   const searching = searchState?.searching ?? false;
   const resultsForQuery =
     searchState?.activeQuery === query ? searchState : undefined;
   const matches = resultsForQuery?.matches ?? [];
   const searchError = resultsForQuery?.error ?? null;
+
+  const languageOptions = useMemo(() => {
+    const code = languageCode?.trim().toLowerCase() ?? "";
+    if (!code || SONG_LANGUAGES.some((opt) => opt.code === code)) {
+      return SONG_LANGUAGES;
+    }
+    return [
+      ...SONG_LANGUAGES,
+      { code, label: `${languageLabel(code)} (${code})` },
+    ];
+  }, [languageCode]);
+
+  const selectValue = languageCode?.trim().toLowerCase() ?? "";
 
   useEffect(() => {
     setQuery(defaultQuery);
@@ -62,6 +89,7 @@ export function LyricsEditor({
 
   useEffect(() => {
     searchedRef.current = false;
+    prevSelectedRef.current = undefined;
   }, [trackId]);
 
   useEffect(() => {
@@ -81,6 +109,25 @@ export function LyricsEditor({
     });
   }, [matches]);
 
+  // Select-time detect when the match changes (including auto-select of first match).
+  // Do not clear language on initial empty selection before search settles.
+  useEffect(() => {
+    if (searching) return;
+
+    const prev = prevSelectedRef.current;
+    if (prev === undefined) {
+      prevSelectedRef.current = selectedId;
+      if (selectedId != null) {
+        onPreviewLanguage(selectedId);
+      }
+      return;
+    }
+    if (prev === selectedId) return;
+    prevSelectedRef.current = selectedId;
+    onPreviewLanguage(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, searching, trackId]);
+
   function requestSearch(nextQuery: string) {
     if (debounceRef.current != null) {
       window.clearTimeout(debounceRef.current);
@@ -91,13 +138,68 @@ export function LyricsEditor({
     }, 300);
   }
 
+  function detectedLabel(): string | null {
+    if (languageManual || !languageCode) return null;
+    return languageLabel(languageCode);
+  }
+
   return (
     <div className="lyrics-panel">
       <div className="lyrics-source">
         <p className="muted lyrics-hint">
-          Process uses pasted text, or the selected song, or transcription if
-          you leave both empty.
+          Process saves lyrics, then translates using the language below. Selecting
+          a match detects language first; override does not Process.
         </p>
+        <div className="lyrics-language-row">
+          <label className="field-label" htmlFor={`lyrics-lang-${trackId}`}>
+            Song language
+          </label>
+          <select
+            id={`lyrics-lang-${trackId}`}
+            className="field"
+            value={
+              languageOptions.some((opt) => opt.code === selectValue)
+                ? selectValue
+                : ""
+            }
+            onChange={(e) => {
+              const next = e.target.value;
+              onSetLanguage(next ? next : null, selectedId);
+            }}
+            disabled={isProcessing}
+          >
+            {languageOptions.map((opt) => {
+              let label = opt.label;
+              if (opt.code && opt.code === selectValue) {
+                label = languageManual
+                  ? `${opt.label} (manual)`
+                  : `${opt.label} (detected)`;
+              }
+              return (
+                <option key={opt.code || "auto"} value={opt.code}>
+                  {label}
+                </option>
+              );
+            })}
+          </select>
+          {isDetectingLanguage && (
+            <p className="muted lyrics-hint" role="status" aria-live="polite">
+              Detecting language from selected match…
+            </p>
+          )}
+          {!isDetectingLanguage && detectedLabel() && !languageManual && (
+            <p className="muted lyrics-hint" role="status" aria-live="polite">
+              Auto-detected: {detectedLabel()}
+            </p>
+          )}
+          {languagePreviewWarning && (
+            <p className="error lyrics-hint">{languagePreviewWarning}</p>
+          )}
+          <p className="muted lyrics-hint">
+            Override bad auto-detect (e.g. romanized Japanese). Changing language
+            only sets a preference — Process applies lyrics and translation.
+          </p>
+        </div>
         <div className="lyrics-search-row">
           <label className="field-label" htmlFor={`lyrics-search-${trackId}`}>
             Find lyrics

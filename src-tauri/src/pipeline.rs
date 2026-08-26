@@ -3,13 +3,37 @@
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::read_from_path;
 use lofty::tag::{Accessor, ItemKey};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
 use crate::lrclib::{self, LyricsMatch};
 use crate::sidecar;
 use crate::storage::{self, Track};
 use rusqlite::Connection;
+
+/// Per-track generation so stale select-time detect results do not overwrite newer work.
+fn preview_generations() -> &'static Mutex<HashMap<i64, u64>> {
+    static MAP: OnceLock<Mutex<HashMap<i64, u64>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn bump_preview_generation(track_id: i64) -> u64 {
+    let mut map = preview_generations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let entry = map.entry(track_id).or_insert(0);
+    *entry = entry.wrapping_add(1);
+    *entry
+}
+
+fn preview_generation_matches(track_id: i64, gen: u64) -> bool {
+    let map = preview_generations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    map.get(&track_id).copied() == Some(gen)
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +55,21 @@ pub struct LyricsSearchFinished {
 pub struct LyricsSearchFailed {
     pub track_id: i64,
     pub query: Option<String>,
+    pub message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguagePreviewFinished {
+    pub track: Track,
+    /// Soft-fail hint (empty/instrumental/detect error). None on success or no-op.
+    pub warning: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguagePreviewFailed {
+    pub track_id: i64,
     pub message: String,
 }
 
@@ -62,16 +101,18 @@ pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
     }
 
     storage::replace_lyrics(&conn, track.id, &meta.lyric_lines, "embedded")?;
-    apply_detected_language(
-        &conn,
-        track.id,
-        &meta.lyric_lines,
-        meta.title.as_deref(),
-        meta.artist.as_deref(),
-        meta.album.as_deref(),
-        Some(file_path),
-        None,
-    );
+    if !track.language_manual {
+        apply_detected_language(
+            &conn,
+            track.id,
+            &meta.lyric_lines,
+            meta.title.as_deref(),
+            meta.artist.as_deref(),
+            meta.album.as_deref(),
+            Some(file_path),
+            None,
+        );
+    }
 
     storage::get_track_by_id(&conn, track.id)?
         .ok_or_else(|| format!("track missing after upload: {}", track.id))
@@ -134,6 +175,9 @@ pub fn process_lyrics(
     pasted: Option<String>,
     lrclib_id: Option<i64>,
 ) -> Result<Track, String> {
+    // Invalidate in-flight select-time detects for this track.
+    let _ = bump_preview_generation(track_id);
+
     let conn = storage::open(app)?;
     let track = storage::get_track_by_id(&conn, track_id)?
         .ok_or_else(|| format!("track not found: {track_id}"))?;
@@ -175,16 +219,20 @@ pub fn process_lyrics(
     }
 
     storage::replace_lyrics(&conn, track_id, &lyric_lines, source)?;
-    let language_code = apply_detected_language(
-        &conn,
-        track_id,
-        &lyric_lines,
-        meta.title.as_deref().or(Some(track.title.as_str())),
-        meta.artist.as_deref().or(track.artist.as_deref()),
-        meta.album.as_deref().or(track.album.as_deref()),
-        Some(&track.file_path),
-        whisper_language,
-    );
+    let language_code = if track.language_manual {
+        track.language_code.clone()
+    } else {
+        apply_detected_language(
+            &conn,
+            track_id,
+            &lyric_lines,
+            meta.title.as_deref().or(Some(track.title.as_str())),
+            meta.artist.as_deref().or(track.artist.as_deref()),
+            meta.album.as_deref().or(track.album.as_deref()),
+            Some(&track.file_path),
+            whisper_language,
+        )
+    };
 
     // Soft-fail: originals already saved; translation errors do not fail Process.
     let _ = maybe_translate_lyrics(&conn, track_id, &lyric_lines, language_code.as_deref());
@@ -291,6 +339,201 @@ pub fn spawn_process_lyrics(
     });
 }
 
+/// Set or clear the song language from Edit. Empty/None = auto-detect mode.
+/// Preference only: does not save lyrics or run translation (Process does that).
+/// When clearing to auto with an LRCLIB id, runs select-time detect on that match in-thread.
+pub fn set_track_language(
+    app: &AppHandle,
+    track_id: i64,
+    language_code: Option<String>,
+    lrclib_id: Option<i64>,
+) -> Result<(Track, Option<String>), String> {
+    let gen = bump_preview_generation(track_id);
+
+    let conn = storage::open(app)?;
+    let _track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+
+    let normalized = language_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase());
+
+    match normalized.as_deref() {
+        None | Some("auto") => {
+            storage::clear_language_manual(&conn, track_id)?;
+            storage::clear_language_code(&conn, track_id)?;
+            drop(conn);
+            if lrclib_id.is_some() {
+                return preview_lrclib_language_with_gen(app, track_id, lrclib_id, gen);
+            }
+            let conn = storage::open(app)?;
+            let updated = storage::get_track_by_id(&conn, track_id)?
+                .ok_or_else(|| format!("track missing after language update: {track_id}"))?;
+            Ok((updated, None))
+        }
+        Some(code) => {
+            storage::set_language_code(&conn, track_id, code, true)?;
+            let updated = storage::get_track_by_id(&conn, track_id)?
+                .ok_or_else(|| format!("track missing after language update: {track_id}"))?;
+            Ok((updated, None))
+        }
+    }
+}
+
+pub fn spawn_set_track_language(
+    app: AppHandle,
+    track_id: i64,
+    language_code: Option<String>,
+    lrclib_id: Option<i64>,
+) {
+    std::thread::spawn(move || {
+        match set_track_language(&app, track_id, language_code, lrclib_id) {
+            Ok((track, warning)) => {
+                let _ = app.emit("pipeline-finished", &track);
+                if lrclib_id.is_some() {
+                    let _ = app.emit(
+                        "language-preview-finished",
+                        &LanguagePreviewFinished {
+                            track: track.clone(),
+                            warning,
+                        },
+                    );
+                }
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed { track_id, message },
+                );
+            }
+        }
+    });
+}
+
+/// Select-time language preview: fetch LRCLIB lyrics and detect, without persisting lyrics.
+/// Does not overwrite a manual language. Soft-fails empty/instrumental/detect errors.
+pub fn preview_lrclib_language(
+    app: &AppHandle,
+    track_id: i64,
+    lrclib_id: Option<i64>,
+) -> Result<(Track, Option<String>), String> {
+    let gen = bump_preview_generation(track_id);
+    preview_lrclib_language_with_gen(app, track_id, lrclib_id, gen)
+}
+
+fn preview_lrclib_language_with_gen(
+    app: &AppHandle,
+    track_id: i64,
+    lrclib_id: Option<i64>,
+    gen: u64,
+) -> Result<(Track, Option<String>), String> {
+    let conn = storage::open(app)?;
+    let track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+
+    if track.language_manual {
+        return Ok((track, None));
+    }
+
+    if lrclib_id.is_none() {
+        storage::clear_language_code(&conn, track_id)?;
+        if !preview_generation_matches(track_id, gen) {
+            return Ok((track, None));
+        }
+        let updated = storage::get_track_by_id(&conn, track_id)?
+            .ok_or_else(|| format!("track missing after language clear: {track_id}"))?;
+        return Ok((updated, None));
+    }
+
+    let id = lrclib_id.expect("lrclib_id checked above");
+    storage::clear_language_code(&conn, track_id)?;
+
+    let lyrics_text = match lrclib::lyrics_for_id(id) {
+        Ok(text) => text,
+        Err(message) => {
+            if !preview_generation_matches(track_id, gen) {
+                return Ok((track, None));
+            }
+            let updated = storage::get_track_by_id(&conn, track_id)?
+                .ok_or_else(|| format!("track missing after language clear: {track_id}"))?;
+            return Ok((updated, Some(message)));
+        }
+    };
+
+    let lyric_lines = split_lyric_lines(&lyrics_text);
+    if lyric_lines.is_empty() {
+        if !preview_generation_matches(track_id, gen) {
+            return Ok((track, None));
+        }
+        let updated = storage::get_track_by_id(&conn, track_id)?
+            .ok_or_else(|| format!("track missing after language clear: {track_id}"))?;
+        return Ok((
+            updated,
+            Some("That match has no usable lyrics text.".to_string()),
+        ));
+    }
+
+    if !preview_generation_matches(track_id, gen) {
+        return Ok((track, None));
+    }
+
+    // Re-check manual in case the user overrode while we were fetching.
+    let track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+    if track.language_manual {
+        return Ok((track, None));
+    }
+
+    let detected = apply_detected_language(
+        &conn,
+        track_id,
+        &lyric_lines,
+        Some(track.title.as_str()),
+        track.artist.as_deref(),
+        track.album.as_deref(),
+        Some(&track.file_path),
+        None,
+    );
+
+    if !preview_generation_matches(track_id, gen) {
+        return Ok((track, None));
+    }
+
+    let updated = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track missing after language preview: {track_id}"))?;
+    if updated.language_manual {
+        return Ok((updated, None));
+    }
+
+    let warning = if detected.is_none() {
+        Some("Could not detect language from that match.".to_string())
+    } else {
+        None
+    };
+    Ok((updated, warning))
+}
+
+pub fn spawn_preview_lrclib_language(app: AppHandle, track_id: i64, lrclib_id: Option<i64>) {
+    std::thread::spawn(move || {
+        match preview_lrclib_language(&app, track_id, lrclib_id) {
+            Ok((track, warning)) => {
+                let _ = app.emit(
+                    "language-preview-finished",
+                    &LanguagePreviewFinished { track, warning },
+                );
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "language-preview-failed",
+                    &LanguagePreviewFailed { track_id, message },
+                );
+            }
+        }
+    });
+}
+
 fn apply_detected_language(
     conn: &Connection,
     track_id: i64,
@@ -303,7 +546,7 @@ fn apply_detected_language(
 ) -> Option<String> {
     if lyric_lines.is_empty() {
         if let Some(code) = whisper_language {
-            let _ = storage::set_language_code(conn, track_id, &code);
+            let _ = storage::set_language_code(conn, track_id, &code, false);
             return Some(code);
         }
         return None;
@@ -327,7 +570,7 @@ fn apply_detected_language(
     };
 
     if let Some(ref code) = language {
-        let _ = storage::set_language_code(conn, track_id, code);
+        let _ = storage::set_language_code(conn, track_id, code, false);
     }
     language
 }
