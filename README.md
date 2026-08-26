@@ -2,7 +2,7 @@
 
 Downloadable desktop music player that helps you learn a language through music you already like. Import a local audio file, play it, and follow original lyrics with per-word English glosses and a full-sentence English sense beside each line.
 
-DISCLAIMER: This will simply help with vocabulary, structure and complete meanings. Learning a language is difficult and many subtlties could and would be lost in translations.
+DISCLAIMER: This will simply help with vocabulary, structure and complete meanings. Learning a language is difficult and many subtlties could and would be lost in translations. This program was designed to enjoy music while also properly learning a language.
 
 Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes: [`plan.md`](./plan.md). Pipeline flowchart: [`flow.md`](./flow.md).
 
