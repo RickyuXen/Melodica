@@ -28,11 +28,21 @@ fn app_info() -> AppInfo {
     }
 }
 
-/// Accepts a local file path from the UI and saves track metadata immediately.
-/// Embedded lyric tags are stored if present; Whisper is not started here.
+/// Accepts a local file path from the UI, saves track metadata, then runs the
+/// full auto-pipeline (lyrics + translation) in the background.
 #[tauri::command]
 fn process_upload(app: AppHandle, file_path: String) -> Result<Track, String> {
-    pipeline::begin_upload(&app, &file_path)
+    let tracks = pipeline::process_uploads(&app, vec![file_path])?;
+    tracks
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Upload failed".to_string())
+}
+
+/// Accepts one or more local file paths; upserts each and runs the upload auto-pipeline.
+#[tauri::command]
+fn process_uploads(app: AppHandle, file_paths: Vec<String>) -> Result<Vec<Track>, String> {
+    pipeline::process_uploads(&app, file_paths)
 }
 
 #[tauri::command]
@@ -198,6 +208,14 @@ fn playback_status(engine: State<'_, SharedPlayback>) -> Result<PlaybackStatus, 
     })
 }
 
+#[tauri::command]
+fn set_volume(engine: State<'_, SharedPlayback>, volume: f32) -> Result<(), String> {
+    playback::with_engine(&engine, |player| {
+        player.set_volume(volume);
+        Ok(())
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -206,6 +224,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             process_upload,
+            process_uploads,
             search_lyrics,
             process_lyrics,
             set_track_language,
@@ -218,7 +237,8 @@ pub fn run() {
             playback_play,
             playback_toggle,
             playback_seek,
-            playback_status
+            playback_status,
+            set_volume
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,21 @@ import { LyricsEditor, type TrackSearchState } from "./LyricsEditor";
 
 type LyricsState = LyricLine[] | "loading" | "error" | undefined;
 
+function phaseLabel(phase: string | null | undefined): string {
+  switch (phase) {
+    case "importing":
+      return "Importing…";
+    case "searching":
+      return "Finding lyrics…";
+    case "transcribing":
+      return "Transcribing…";
+    case "translating":
+      return "Translating…";
+    default:
+      return "Processing…";
+  }
+}
+
 type TrackItemProps = {
   track: Track;
   mode: "library" | "edit";
@@ -12,6 +27,7 @@ type TrackItemProps = {
   lyricsOpen: boolean;
   isCurrent: boolean;
   isProcessing: boolean;
+  processingPhase?: string | null;
   playing: boolean;
   positionMs: number;
   durationMs: number;
@@ -38,6 +54,7 @@ export function TrackItem({
   lyricsOpen,
   isCurrent,
   isProcessing,
+  processingPhase = null,
   playing,
   positionMs,
   durationMs,
@@ -71,7 +88,9 @@ export function TrackItem({
               </span>
             )}
             {isProcessing && (
-              <span className="processing-tag">Processing…</span>
+              <span className="processing-tag">
+                {phaseLabel(processingPhase)}
+              </span>
             )}
           </div>
           <div className="track-actions">

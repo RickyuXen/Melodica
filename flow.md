@@ -1,14 +1,42 @@
 # Current pipeline
 
-What Melodica does today, from file to lyrics on screen (including select-time language detect and translation after Process).
+What Melodica does today, from file to lyrics on screen (upload auto-pipeline, Edit Process, select-time language detect, and translation).
+
+## Upload auto-pipeline
+
+Every upload (one file or many) upserts tracks then runs lyrics + translation in the background.
 
 ```mermaid
 flowchart TD
-  upload[Upload local audio file]
-  meta[Save title / artist / album / duration]
-  embedded{File has lyric tags?}
-  showTags[Store those lyrics]
-  play[Play / pause / seek]
+  pick[Multi-select audio files]
+  upsert[Upsert each track metadata]
+  statusImport[Status: importing]
+  parallelLrc[Parallel LRCLIB search per track]
+  pickMatch{"Any match with abs duration delta lte 1s?"}
+  useLrc[Fetch closest LRCLIB lyrics]
+  useTags{Embedded tags?}
+  useWhisper[Whisper serial queue]
+  saveOrig[Save originals + auto-detect language]
+  waitAll[Wait for all tracks in upload set]
+  groupLang[Group by primary language tag]
+  skipEn[Skip en groups]
+  batchTx[One translate-align per non-en group]
+  ready[Status: ready / failed hint]
+
+  pick --> upsert --> statusImport --> parallelLrc --> pickMatch
+  pickMatch -->|yes| useLrc --> saveOrig
+  pickMatch -->|no| useTags
+  useTags -->|yes| saveOrig
+  useTags -->|no| useWhisper --> saveOrig
+  saveOrig --> waitAll --> groupLang --> skipEn --> batchTx --> ready
+```
+
+Duration compare: track `duration_ms` vs LRCLIB `durationSeconds`. Missing either side → no LRCLIB auto-pick. Ties: closest delta, then LRCLIB API order. Soft-fail per track; batch-translate whoever acquired successfully. Unknown language still attempts translation with `sourceLanguage: null`.
+
+## Edit Process (manual)
+
+```mermaid
+flowchart TD
   panel[Open Edit lyrics panel]
   search[Search LRCLIB]
   pick[Pick a match or paste lyrics]
@@ -23,15 +51,12 @@ flowchart TD
   saveOrig[Save originals to lyrics_cache]
   detect[Re-detect language if not manual]
   skip{primaryTag equals target en?}
-  translate[Sidecar translate-align]
+  translate[Sidecar translate-align one document]
   saveTx[Write sense + word_glosses]
   softFail[Keep originals; soft-fail]
   show[Home View lyrics]
 
-  upload --> meta --> embedded
-  embedded -->|yes| showTags --> play
-  embedded -->|no| play
-  play --> panel --> search --> pick
+  panel --> search --> pick
   pick -->|LRCLIB match selected| selectDetect --> showLang
   pick -->|paste or None| showLang
   showLang --> process --> source
@@ -52,19 +77,20 @@ flowchart TD
 
 Process order: **paste > LRCLIB match > embedded tags > Whisper**.
 
-Select-time detect runs on LRCLIB match select only (not paste). It does **not** write lyrics. Song language override is preference-only until Process.
+Edit LRCLIB auto-select uses the same **±1s duration match** as upload (`preferredMatchId` on search results). Select-time detect runs on LRCLIB match select only (not paste). It does **not** write lyrics. Song language override is preference-only until Process.
 
-## Line-aligned translation (as of Process)
+## Line-aligned translation
 
-After originals are stored and language is resolved (manual override, or re-detect when not manual):
+After originals are stored and language is resolved:
 
 - **Skip** when the primary language tag equals the target (`en` for now).
-- Otherwise call the sidecar `POST /translate-align` with **one lyrics document containing all lines** (the API accepts **multiple same-language documents** for future multi-song upload batching).
+- **Upload set:** one `POST /translate-align` per language group with **multiple documents**.
+- **Edit Process:** one document containing all lines for that track.
 - Each line stores:
   - `translated_text` — full sentence sense in the target language
   - `word_glosses` — JSON `[{text, gloss}, …]` under the original tokens
 - Home **View lyrics** shows tokens with glosses underneath and the sentence sense in a separated column to the right.
-- Translation failures **soft-fail**: Process still succeeds with originals; Home shows a muted hint to try again / check the API key.
+- Translation failures **soft-fail**: originals remain; Home shows a muted hint to try again / check the API key.
 
 API key precedence: **Settings-stored key overrides `MELODICA_TRANSLATE_API_KEY`**.
 
@@ -88,7 +114,3 @@ flowchart TD
 ## Play history
 
 Table `play_history` already exists (`track_id`, `played_at`). When the user starts a track, append a history row. A recently-played list can read that table later.
-
-## Multi-song translate batching
-
-`POST /translate-align` already accepts multiple `documents` of the same source language. When upload can process many songs at once, Rust should group tracks by language and pass several documents per call to save provider round-trips.

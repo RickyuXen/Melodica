@@ -9,6 +9,7 @@ export type TrackSearchState = {
   activeQuery: string;
   searching: boolean;
   matches: LyricsMatch[];
+  preferredMatchId: number | null;
   error: string | null;
 };
 
@@ -105,11 +106,15 @@ export function LyricsEditor({
       if (current != null && matches.some((match) => match.id === current)) {
         return current;
       }
+      const preferred = resultsForQuery?.preferredMatchId ?? null;
+      if (preferred != null && matches.some((match) => match.id === preferred)) {
+        return preferred;
+      }
       return matches[0]?.id ?? null;
     });
-  }, [matches]);
+  }, [matches, resultsForQuery?.preferredMatchId]);
 
-  // Select-time detect when the match changes (including auto-select of first match).
+  // Select-time detect when the match changes (including duration-matched auto-select).
   // Do not clear language on initial empty selection before search settles.
   useEffect(() => {
     if (searching) return;

@@ -26,7 +26,7 @@ Used on a desktop, in a Tauri window (React UI in a webview, Rust core, optional
 
 **Distribution intent:** end users download an installable desktop app (Windows installer / equivalent on other platforms), then double-click Melodica. They never run `npm`, install Node/Rust, or start backend processes by hand. The React UI is baked into the Tauri binary at build time; Rust APIs run inside that process. The Python language sidecar is still started manually in development today; shipping it inside the app so it starts and stops with Melodica is planned (see below).
 
-Typical loop: pick a file → play/seek → open the lyrics panel, search or paste, confirm or override auto-detected language after an LRCLIB match, then Process (lyrics + translation when needed).
+Typical loop: pick one or more files → upload auto-pipeline finds lyrics and translates → play/seek on Home. Edit remains for search, paste, language override, and manual Process.
 
 ## Capabilities and Constraints
 
@@ -41,10 +41,13 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 **Shipped today**
 
 - Tauri desktop shell with Home / Upload / Edit / Settings tabs (`npm run tauri:dev` / `tauri:build`).
-- Import a local file (MP3, FLAC, WAV, OGG, M4A, AAC), persist track metadata in SQLite, play / pause / seek.
-- Lyrics from embedded tags, LRCLIB search/select (non-blocking), or user-pasted text. Whisper ASR runs only when the user Processes with no other source.
-- Select-time language detection when an LRCLIB match is chosen (including auto-select); Song language shows auto-detected code and allows override without Processing. Paste waits for Process-time detect.
-- After Process: save lyrics, re-detect when not manual, then for non-English (or unknown) lyrics sidecar translation writes per-line English sense (`translated_text`) and word glosses (`word_glosses`); English source language skips translation.
+- Import one or more local files (MP3, FLAC, WAV, OGG, M4A, AAC), persist track metadata in SQLite, play / pause / seek / volume.
+- **Upload auto-pipeline:** every upload (single or multi) runs lyrics acquisition then translation without requiring Edit → Process. Library shows per-track phase (importing / finding lyrics / transcribing / translating).
+- Lyrics source on upload: LRCLIB match within ±1s of track duration (closest wins; API order on ties) → else embedded tags → else Whisper ASR. Missing durations do not auto-pick LRCLIB. Soft-fail per track; the rest of the set continues.
+- Multi-upload translation: after all tracks in the set finish acquisition, group by primary language tag and call `translate-align` once per non-English group (unknown/`null` language still attempts translation). English source language skips translation.
+- Edit: LRCLIB search/select (non-blocking) uses the same ±1s preferred match for auto-select; paste and manual Process still work (paste > LRCLIB id > tags > Whisper, then per-track translate).
+- Select-time language detection when an LRCLIB match is chosen (including duration-matched auto-select); Song language shows auto-detected code and allows override without Processing. Paste waits for Process-time detect. Upload auto-pipeline always auto-detects (clears prior manual override for that track).
+- After lyrics are saved: for non-English (or unknown) lyrics, sidecar translation writes per-line English sense (`translated_text`) and word glosses (`word_glosses`).
 - Home “View lyrics”: karaoke-style line highlight and seek, plus dual study layout (glosses under tokens, sense to the right). Soft-fail leaves originals if translation fails.
 - Translation API key: Settings (overrides env) or `MELODICA_TRANSLATE_API_KEY`.
 - Light / dark theme and Melodica branding.
@@ -54,7 +57,7 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 
 - Additional translation target languages beyond English (Settings preference already lists French).
 - Offline / local LLM provider behind the same translate interface.
-- Volume control, playlists, liked tracks.
+- Playlists, liked tracks.
 - Bundle the Python sidecar so end users never install Python or run a second terminal:
   - Freeze the FastAPI service into a platform binary (e.g. PyInstaller).
   - Register it as a Tauri `externalBin` and spawn/kill it with the app lifecycle.
@@ -62,10 +65,9 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
   - Whisper model may still download into app data on first ASR use (weights are large).
 - Stronger audio/lyrics pipeline:
   - Confidence scoring over LRCLIB + translation results (prefer ~90%+ matches).
-  - On upload, auto-select the LRCLIB option closest in duration, then fall back toward translation.
-  - Multi-song upload that batches same-language tracks into one `translate-align` call.
   - English-equivalent phonetic transcription.
-- Multi uploads of songs -> use auto detect only, send in multiple songs for a single call.
+- add logging
+
 
 **Open**
 
@@ -80,7 +82,7 @@ Typical loop: pick a file → play/seek → open the lyrics panel, search or pas
 ## Evidence on Hand
 
 - Architecture and intent: `plan.md`, `explanation.md`, `README.md`, `flow.md`.
-- Working prototype: library upload, playback, lyrics panel, language detection, karaoke line sync, sidecar ASR, Process-time translation with word glosses + line sense.
+- Working prototype: multi-file upload auto-pipeline, playback, lyrics panel, language detection, karaoke line sync, sidecar ASR, batched translate-align with word glosses + line sense.
 - App icons under `src-tauri/icons/`.
 - No testimonials, customers, benchmarks, pricing, or press. Future work must not invent them. Demonstration tracks are the user’s own files, not a fake catalog.
 

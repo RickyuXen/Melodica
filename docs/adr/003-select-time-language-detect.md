@@ -10,7 +10,7 @@ Edit already searched LRCLIB and let the user pick a match, but language detecti
 
 ## Decision
 
-- **Select-time detect:** When the user selects an LRCLIB match (including auto-select of the first result), fetch that match’s lyrics text and run language detection. Write `tracks.language_code` with `language_manual=false`. Do **not** persist lyrics to `lyrics_cache`.
+- **Select-time detect:** When the user selects an LRCLIB match (including duration-matched auto-select within ±1s), fetch that match’s lyrics text and run language detection. Write `tracks.language_code` with `language_manual=false`. Do **not** persist lyrics to `lyrics_cache`.
 - **Show** the detected code in Song language as “(detected)” plus an “Auto-detected: …” hint. Soft-fail empty/instrumental/detect errors with a muted/error hint; do not block Edit or Process.
 - **Manual override** sets `language_manual=true` and must not run Process, save lyrics, or translate. Manual wins over in-flight select-time detect.
 - **Auto-detect** in the picker clears manual/code; if a match is selected, re-runs select-time fetch+detect. Otherwise leave empty until Process.

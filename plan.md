@@ -51,14 +51,14 @@ flowchart TB
 
 ## The core pipeline
 
-This is the signature feature. Language can be previewed when the user picks an LRCLIB match; lyrics and translation are committed only when they click **Process**, then cached so replays are instant.
+This is the signature feature. On **upload**, Melodica runs the full lyrics + translation pipeline automatically (duration-matched LRCLIB or tags/Whisper, then batched translate). On **Edit**, language can be previewed when the user picks an LRCLIB match; lyrics and translation are committed when they click **Process**, then cached so replays are instant.
 
 ```mermaid
 flowchart TB
-    A["Song imported<br/>Audio file added to library"] --> B["Find lyrics<br/>LRCLIB search / paste / tags / Whisper"]
-    B --> B2["Select-time detect<br/>On LRCLIB match: fetch text + detect language<br/>Show in Song language; no lyrics persist"]
-    B2 --> C["Process<br/>Save originals → re-detect if not manual"]
-    C --> D["Translate + align lines<br/>Local or cloud LLM"]
+    A["Song imported<br/>Audio file(s); upload auto-pipeline"] --> B["Find lyrics<br/>±1s LRCLIB / tags / Whisper"]
+    B --> B2["Detect language<br/>Upload: always auto-detect<br/>Edit: select-time on LRCLIB match"]
+    B2 --> C["Translate<br/>Upload: batch by language<br/>Edit Process: one document"]
+    C --> D["Cache in SQLite<br/>originals + sense + word_glosses"]
     D --> E["Show side-by-side lyrics<br/>Synced to playback"]
 ```
 
@@ -66,10 +66,11 @@ flowchart TB
 
 **Select-time vs Process (Edit):**
 
-- Selecting an LRCLIB match (including auto-select of the first result) **fetches** that match’s lyrics and **detects** language immediately, writing `tracks.language_code` (`language_manual=false`). Lyrics are **not** written to `lyrics_cache` yet.
+- Selecting an LRCLIB match (including **duration-matched** auto-select within ±1s of track length) **fetches** that match’s lyrics and **detects** language immediately, writing `tracks.language_code` (`language_manual=false`). Lyrics are **not** written to `lyrics_cache` yet.
 - The Song language control shows the auto-detected value; the user may **override** (sets `language_manual=true`). Override is preference-only — it does **not** Process, save lyrics, or translate.
 - Choosing Auto-detect clears manual; if a match is selected, select-time fetch+detect runs again.
-- **Process** is the only commit: resolve source (**paste > LRCLIB id > embedded tags > Whisper**) → save originals → **re-detect when not manual** → translate-align (skip English; soft-fail errors). Paste has no select-time detect.
+- **Process** is the only Edit commit: resolve source (**paste > LRCLIB id > embedded tags > Whisper**) → save originals → **re-detect when not manual** → translate-align (skip English; soft-fail errors). Paste has no select-time detect.
+- **Upload auto-pipeline** commits without Edit: ±1s LRCLIB → tags → Whisper, always auto-detect, then batch translate by language for the upload set. Re-upload of the same path re-runs the pipeline.
 - In-flight select-time work uses per-track generation tokens so stale results cannot overwrite a newer match, manual override, or Process.
 
 **On lyrics sources — what each one actually gives you:**
@@ -80,7 +81,7 @@ flowchart TB
 
 Given that, lean on LRCLIB with Whisper transcription as the honest fallback for anything it doesn't have, rather than leaning on Musixmatch's preview text or scraping Genius pages.
 
-**Translation + line alignment:** prompt the LLM for structured output — per document, a JSON array of lines with `{lineIndex, sense, words:[{text,gloss}]}` — rather than a free-flowing translated paragraph. The endpoint accepts **multiple lyrics documents** of the same language so future multi-song upload can batch provider calls. Word glosses sit under original tokens; `sense` is the full-line meaning. Translation runs **only inside Process**, using the manual language if set, otherwise the language re-detected from the saved lyrics.
+**Translation + line alignment:** prompt the LLM for structured output — per document, a JSON array of lines with `{lineIndex, sense, words:[{text,gloss}]}` — rather than a free-flowing translated paragraph. The endpoint accepts **multiple lyrics documents** of the same language. **Upload auto-pipeline** groups tracks by primary language tag and batches provider calls; **Edit Process** sends one document with all lines. Word glosses sit under original tokens; `sense` is the full-line meaning. Translation uses the manual language if set (Edit), otherwise the language detected from the saved lyrics.
 
 ---
 

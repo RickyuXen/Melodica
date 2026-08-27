@@ -62,7 +62,7 @@ npm run sidecar:install
 npm run sidecar:dev
 ```
 
-First sidecar start downloads the Whisper `base` model. Process with no other lyrics source calls `POST /transcribe`. Selecting an LRCLIB match runs select-time `POST /detect-language` (no lyrics persist). After Process saves originals, it re-detects when language is not manual, then calls `POST /translate-align` when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
+First sidecar start downloads the Whisper `base` model. **Upload** auto-runs lyrics + translation for each chosen file (LRCLIB within ±1s of duration, else tags, else `POST /transcribe`), then batches same-language tracks into `POST /translate-align`. On **Edit**, selecting an LRCLIB match runs select-time `POST /detect-language` (no lyrics persist). After Process saves originals, it re-detects when language is not manual, then calls `POST /translate-align` for that track when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
 
 Build installers with:
 

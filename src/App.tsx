@@ -4,6 +4,7 @@ import { Header, type AppTab } from "./components/Header";
 import { Settings } from "./components/Settings";
 import { TrackItem } from "./components/TrackItem";
 import type { TrackSearchState } from "./components/LyricsEditor";
+import { VolumeSlider } from "./components/VolumeSlider";
 import { errorMessage } from "./lib/format";
 import { applyTheme, getStoredTheme, setStoredTheme, type Theme } from "./lib/theme";
 import {
@@ -21,17 +22,19 @@ import {
   onLyricsSearchFinished,
   onPipelineFailed,
   onPipelineFinished,
-  pickAudioFile,
+  onPipelinePhase,
+  pickAudioFiles,
   playbackPlay,
   playbackSeek,
   playbackStatus,
   playbackToggle,
   previewLrclibLanguage,
   processLyrics,
-  processUpload,
+  processUploads,
   resetDatabase,
   searchLyrics,
   setTrackLanguage,
+  setVolume,
   type AppInfo,
   type LyricLine,
   type PlaybackStatus,
@@ -74,6 +77,9 @@ function App() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [pipelinePhaseByTrack, setPipelinePhaseByTrack] = useState<
+    Record<number, string>
+  >({});
   const [detectingLanguageIds, setDetectingLanguageIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -81,6 +87,7 @@ function App() {
     useState<Record<number, string | null>>({});
   const [searchByTrack, setSearchByTrack] = useState<SearchCache>({});
   const [playback, setPlayback] = useState<PlaybackStatus>(emptyPlayback);
+  const [volume, setVolumeState] = useState(1);
   const [scrub, setScrub] = useState<{ trackId: number; ms: number } | null>(
     null,
   );
@@ -111,6 +118,7 @@ function App() {
     setUploadError(null);
     setPlaybackError(null);
     setProcessingIds(new Set());
+    setPipelinePhaseByTrack({});
     setDetectingLanguageIds(new Set());
     setLanguagePreviewWarningByTrack({});
     setSearchByTrack({});
@@ -129,6 +137,12 @@ function App() {
       next.delete(trackId);
       return next;
     });
+    setPipelinePhaseByTrack((prev) => {
+      if (!(trackId in prev)) return prev;
+      const next = { ...prev };
+      delete next[trackId];
+      return next;
+    });
   }
 
   function markDetectingDone(trackId: number) {
@@ -143,6 +157,7 @@ function App() {
     trackId: number,
     query: string | null,
     matches: TrackSearchState["matches"],
+    preferredMatchId: number | null,
     error: string | null,
   ) {
     const activeQuery = query?.trim() ?? "";
@@ -155,6 +170,7 @@ function App() {
           activeQuery,
           searching: false,
           matches,
+          preferredMatchId,
           error,
         },
       };
@@ -216,6 +232,7 @@ function App() {
     let cancelled = false;
     let unlistenFinished: (() => void) | undefined;
     let unlistenFailed: (() => void) | undefined;
+    let unlistenPhase: (() => void) | undefined;
     let unlistenSearchFinished: (() => void) | undefined;
     let unlistenSearchFailed: (() => void) | undefined;
     let unlistenPreviewFinished: (() => void) | undefined;
@@ -239,9 +256,31 @@ function App() {
 
       unlistenFailed = await onPipelineFailed((error) => {
         if (cancelled) return;
-        markProcessingDone(error.trackId);
+        if (error.trackId > 0) {
+          markProcessingDone(error.trackId);
+        }
         setUploadError(error.message);
         void refreshTracks();
+      });
+
+      unlistenPhase = await onPipelinePhase((event) => {
+        if (cancelled || event.trackId <= 0) return;
+        if (event.phase === "ready") {
+          setPipelinePhaseByTrack((prev) => ({
+            ...prev,
+            [event.trackId]: event.phase,
+          }));
+          return;
+        }
+        if (event.phase === "failed") {
+          markProcessingDone(event.trackId);
+          return;
+        }
+        setProcessingIds((prev) => new Set(prev).add(event.trackId));
+        setPipelinePhaseByTrack((prev) => ({
+          ...prev,
+          [event.trackId]: event.phase,
+        }));
       });
 
       unlistenSearchFinished = await onLyricsSearchFinished((result) => {
@@ -250,13 +289,14 @@ function App() {
           result.trackId,
           result.query,
           result.matches,
+          result.preferredMatchId,
           null,
         );
       });
 
       unlistenSearchFailed = await onLyricsSearchFailed((error) => {
         if (cancelled) return;
-        applySearchResult(error.trackId, error.query, [], error.message);
+        applySearchResult(error.trackId, error.query, [], null, error.message);
       });
 
       unlistenPreviewFinished = await onLanguagePreviewFinished((result) => {
@@ -284,6 +324,7 @@ function App() {
       cancelled = true;
       unlistenFinished?.();
       unlistenFailed?.();
+      unlistenPhase?.();
       unlistenSearchFinished?.();
       unlistenSearchFailed?.();
       unlistenPreviewFinished?.();
@@ -337,10 +378,22 @@ function App() {
     setUploadError(null);
 
     try {
-      const path = await pickAudioFile();
-      if (!path) return;
+      const paths = await pickAudioFiles();
+      if (paths.length === 0) return;
 
-      await processUpload(path);
+      const uploaded = await processUploads(paths);
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        for (const track of uploaded) next.add(track.id);
+        return next;
+      });
+      setPipelinePhaseByTrack((prev) => {
+        const next = { ...prev };
+        for (const track of uploaded) {
+          next[track.id] = prev[track.id] ?? "importing";
+        }
+        return next;
+      });
       setOpenTrackId(null);
       await refreshTracks();
       setActiveTab("home");
@@ -399,6 +452,7 @@ function App() {
         activeQuery,
         searching: true,
         matches: prev[trackId]?.matches ?? [],
+        preferredMatchId: prev[trackId]?.preferredMatchId ?? null,
         error: null,
       },
     }));
@@ -410,6 +464,7 @@ function App() {
         trackId,
         activeQuery,
         [],
+        null,
         err instanceof Error ? err.message : "Could not start lyrics search.",
       );
     }
@@ -502,6 +557,17 @@ function App() {
     }
   }
 
+  async function onVolumeChange(next: number) {
+    const clamped = Math.min(1, Math.max(0, next));
+    setVolumeState(clamped);
+    if (!connected) return;
+    try {
+      await setVolume(clamped);
+    } catch (err: unknown) {
+      setPlaybackError(errorMessage(err, "Could not set volume"));
+    }
+  }
+
   const processingCount = processingIds.size;
   const searchingIds = new Set(
     Object.entries(searchByTrack)
@@ -531,6 +597,7 @@ function App() {
         lyricsOpen={openTrackId === track.id}
         isCurrent={isCurrent}
         isProcessing={processingIds.has(track.id)}
+        processingPhase={pipelinePhaseByTrack[track.id] ?? null}
         playing={isCurrent && playback.playing}
         positionMs={positionMs}
         durationMs={durationMs}
@@ -568,7 +635,7 @@ function App() {
   function renderTrackList() {
     if (tracks.length === 0) {
       return (
-        <p className="muted">No tracks yet. Upload a music file to begin.</p>
+        <p className="muted">No tracks yet. Upload music files to begin.</p>
       );
     }
 
@@ -645,7 +712,14 @@ function App() {
 
       {activeTab === "home" && (
         <section className="panel library">
-          <h2>Library</h2>
+          <div className="library-header">
+            <h2>Library</h2>
+            <VolumeSlider
+              value={volume}
+              onChange={onVolumeChange}
+              disabled={!connected}
+            />
+          </div>
           {renderTrackList()}
         </section>
       )}
@@ -654,8 +728,9 @@ function App() {
         <section className="panel upload">
           <h2>Upload music</h2>
           <p className="muted upload-desc">
-            Add audio files to your library. Supported formats include MP3,
-            FLAC, WAV, OGG, M4A, and AAC.
+            Add one or more audio files. Each upload runs lyrics + translation
+            automatically. Supported formats include MP3, FLAC, WAV, OGG, M4A,
+            and AAC.
           </p>
           <button
             type="button"
@@ -663,7 +738,7 @@ function App() {
             disabled={busy || !connected}
             onClick={onUploadClick}
           >
-            {busy ? "Adding…" : "Choose music file"}
+            {busy ? "Adding…" : "Choose music files"}
           </button>
           {processingCount > 0 && (
             <p className="muted">

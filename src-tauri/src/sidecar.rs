@@ -203,34 +203,41 @@ pub fn detect_language(
     Ok(language)
 }
 
+pub struct TranslatedDocument {
+    pub id: String,
+    pub lines: Vec<LineTranslation>,
+}
+
 /// Translate one or more lyrics documents (same source language) into the target.
 ///
-/// Accepts multiple documents so future multi-song upload can batch same-language
-/// tracks into fewer provider calls. v1 callers pass a single document with all lines.
-pub fn translate_align(
-    document_id: &str,
-    lines: &[(i64, &str)],
+/// Multi-song upload groups same-language tracks into one call. Single-track
+/// Process still sends one document with all lines.
+pub fn translate_align_documents(
+    documents: &[(String, Vec<(i64, String)>)],
     target_language: &str,
     source_language: Option<&str>,
     credentials: &TranslateCredentials,
-) -> Result<Vec<LineTranslation>, String> {
-    if lines.is_empty() {
+) -> Result<Vec<TranslatedDocument>, String> {
+    if documents.is_empty() {
         return Ok(Vec::new());
     }
 
     let request = TranslateAlignRequest {
         target_language: target_language.to_string(),
         source_language: source_language.map(str::to_string),
-        documents: vec![TranslateDocumentIn {
-            id: document_id.to_string(),
-            lines: lines
-                .iter()
-                .map(|(line_index, original)| TranslateLineIn {
-                    line_index: *line_index,
-                    original: (*original).to_string(),
-                })
-                .collect(),
-        }],
+        documents: documents
+            .iter()
+            .map(|(id, lines)| TranslateDocumentIn {
+                id: id.clone(),
+                lines: lines
+                    .iter()
+                    .map(|(line_index, original)| TranslateLineIn {
+                        line_index: *line_index,
+                        original: original.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
         api_key: Some(credentials.api_key.clone()),
         base_url: credentials.base_url.clone(),
         model: credentials.model.clone(),
@@ -257,27 +264,57 @@ pub fn translate_align(
         .read_json()
         .map_err(|e| format!("Invalid translate-align response: {e}"))?;
 
-    let doc = body
+    Ok(body
         .documents
         .into_iter()
-        .find(|d| d.id == document_id)
-        .ok_or_else(|| "translate-align returned no matching document".to_string())?;
-
-    Ok(doc
-        .lines
-        .into_iter()
-        .map(|line| LineTranslation {
-            line_index: line.line_index,
-            translated_text: line.sense.trim().to_string(),
-            word_glosses: line
-                .words
+        .map(|doc| TranslatedDocument {
+            id: doc.id,
+            lines: doc
+                .lines
                 .into_iter()
-                .map(|w| WordGloss {
-                    text: w.text,
-                    gloss: w.gloss,
+                .map(|line| LineTranslation {
+                    line_index: line.line_index,
+                    translated_text: line.sense.trim().to_string(),
+                    word_glosses: line
+                        .words
+                        .into_iter()
+                        .map(|w| WordGloss {
+                            text: w.text,
+                            gloss: w.gloss,
+                        })
+                        .collect(),
                 })
+                .filter(|line| !line.translated_text.is_empty() || !line.word_glosses.is_empty())
                 .collect(),
         })
-        .filter(|line| !line.translated_text.is_empty() || !line.word_glosses.is_empty())
         .collect())
+}
+
+/// Translate a single lyrics document (all lines for one track).
+pub fn translate_align(
+    document_id: &str,
+    lines: &[(i64, &str)],
+    target_language: &str,
+    source_language: Option<&str>,
+    credentials: &TranslateCredentials,
+) -> Result<Vec<LineTranslation>, String> {
+    if lines.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let owned: Vec<(i64, String)> = lines
+        .iter()
+        .map(|(i, text)| (*i, (*text).to_string()))
+        .collect();
+    let docs = translate_align_documents(
+        &[(document_id.to_string(), owned)],
+        target_language,
+        source_language,
+        credentials,
+    )?;
+
+    docs.into_iter()
+        .find(|d| d.id == document_id)
+        .map(|d| d.lines)
+        .ok_or_else(|| "translate-align returned no matching document".to_string())
 }

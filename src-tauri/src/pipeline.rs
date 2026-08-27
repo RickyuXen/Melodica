@@ -42,12 +42,35 @@ pub struct PipelineFailed {
     pub message: String,
 }
 
+/// Per-track phase for upload auto-pipeline (and UI status labels).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelinePhaseEvent {
+    pub track_id: i64,
+    /// importing | searching | transcribing | translating | ready | failed
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+fn emit_phase(app: &AppHandle, track_id: i64, phase: &str, message: Option<String>) {
+    let _ = app.emit(
+        "pipeline-phase",
+        &PipelinePhaseEvent {
+            track_id,
+            phase: phase.to_string(),
+            message,
+        },
+    );
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LyricsSearchFinished {
     pub track_id: i64,
     pub query: Option<String>,
     pub matches: Vec<LyricsMatch>,
+    /// Closest LRCLIB match within ±1s of track duration, if any.
+    pub preferred_match_id: Option<i64>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -118,17 +141,52 @@ pub fn begin_upload(app: &AppHandle, file_path: &str) -> Result<Track, String> {
         .ok_or_else(|| format!("track missing after upload: {}", track.id))
 }
 
+/// Duration window (seconds) for auto-selecting an LRCLIB match against track length.
+const DURATION_MATCH_TOLERANCE_SECS: f64 = 1.0;
+
+/// Pick the closest LRCLIB match within ±1s of track duration.
+/// Missing track or match duration → no pick. Ties keep earlier API order.
+pub fn select_lrclib_by_duration(
+    track_duration_ms: Option<i64>,
+    matches: &[LyricsMatch],
+) -> Option<&LyricsMatch> {
+    let track_ms = track_duration_ms.filter(|ms| *ms > 0)?;
+    let track_sec = track_ms as f64 / 1000.0;
+
+    let mut best: Option<(f64, usize, &LyricsMatch)> = None;
+    for (idx, candidate) in matches.iter().enumerate() {
+        let Some(match_sec) = candidate.duration_seconds.filter(|d| *d > 0.0) else {
+            continue;
+        };
+        let delta = (track_sec - match_sec).abs();
+        if delta > DURATION_MATCH_TOLERANCE_SECS {
+            continue;
+        }
+        match best {
+            None => best = Some((delta, idx, candidate)),
+            Some((best_delta, best_idx, _)) => {
+                if delta < best_delta || ((delta - best_delta).abs() < f64::EPSILON && idx < best_idx)
+                {
+                    best = Some((delta, idx, candidate));
+                }
+            }
+        }
+    }
+    best.map(|(_, _, m)| m)
+}
+
 /// Search LRCLIB off the UI thread and emit completion events.
 pub fn spawn_search_lyrics(app: AppHandle, track_id: i64, query: Option<String>) {
     std::thread::spawn(move || {
         match search_lyrics(&app, track_id, query.clone()) {
-            Ok(matches) => {
+            Ok((matches, preferred_match_id)) => {
                 let _ = app.emit(
                     "lyrics-search-finished",
                     &LyricsSearchFinished {
                         track_id,
                         query,
                         matches,
+                        preferred_match_id,
                     },
                 );
             }
@@ -151,7 +209,7 @@ fn search_lyrics(
     app: &AppHandle,
     track_id: i64,
     query: Option<String>,
-) -> Result<Vec<LyricsMatch>, String> {
+) -> Result<(Vec<LyricsMatch>, Option<i64>), String> {
     let conn = storage::open(app)?;
     let track = storage::get_track_by_id(&conn, track_id)?
         .ok_or_else(|| format!("track not found: {track_id}"))?;
@@ -161,11 +219,13 @@ fn search_lyrics(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    if let Some(q) = custom {
-        lrclib::search_query(q)
+    let matches = if let Some(q) = custom {
+        lrclib::search_query(q)?
     } else {
-        lrclib::search_track(&track.title, track.artist.as_deref())
-    }
+        lrclib::search_track(&track.title, track.artist.as_deref())?
+    };
+    let preferred_match_id = select_lrclib_by_duration(track.duration_ms, &matches).map(|m| m.id);
+    Ok((matches, preferred_match_id))
 }
 
 /// Commit lyrics: pasted text, then LRCLIB id, then embedded tags, then Whisper.
@@ -315,6 +375,390 @@ fn maybe_translate_lyrics(
     }
 
     storage::apply_line_translations(conn, track_id, &translations)
+}
+
+struct AcquiredLyrics {
+    track_id: i64,
+    lyric_lines: Vec<(Option<i64>, String)>,
+    language_code: Option<String>,
+}
+
+enum AcquireOutcome {
+    Ready(AcquiredLyrics),
+    NeedWhisper {
+        track_id: i64,
+        file_path: String,
+        title: String,
+        artist: Option<String>,
+        album: Option<String>,
+    },
+    Failed {
+        track_id: i64,
+        message: String,
+    },
+}
+
+/// Upsert each path, then spawn the full auto-pipeline (lyrics + batched translate).
+pub fn process_uploads(app: &AppHandle, file_paths: Vec<String>) -> Result<Vec<Track>, String> {
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut tracks = Vec::new();
+    for path in &file_paths {
+        // Soft-fail individual bad paths; continue the rest.
+        match begin_upload(app, path) {
+            Ok(track) => {
+                emit_phase(app, track.id, "importing", None);
+                tracks.push(track);
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed {
+                        track_id: 0,
+                        message: format!("{path}: {message}"),
+                    },
+                );
+            }
+        }
+    }
+
+    let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+    if !track_ids.is_empty() {
+        spawn_auto_pipeline(app.clone(), track_ids);
+    }
+    Ok(tracks)
+}
+
+/// Spawn upload auto-pipeline for already-upserted track ids.
+pub fn spawn_auto_pipeline(app: AppHandle, track_ids: Vec<i64>) {
+    std::thread::spawn(move || {
+        run_auto_pipeline(&app, track_ids);
+    });
+}
+
+fn run_auto_pipeline(app: &AppHandle, track_ids: Vec<i64>) {
+    // Parallel LRCLIB / tags acquisition; Whisper stays serial afterward.
+    let mut handles = Vec::with_capacity(track_ids.len());
+    for track_id in track_ids {
+        let app = app.clone();
+        handles.push(std::thread::spawn(move || acquire_lyrics_non_whisper(&app, track_id)));
+    }
+
+    let mut acquired: Vec<AcquiredLyrics> = Vec::new();
+    let mut need_whisper = Vec::new();
+
+    for handle in handles {
+        match handle.join() {
+            Ok(AcquireOutcome::Ready(item)) => acquired.push(item),
+            Ok(AcquireOutcome::NeedWhisper {
+                track_id,
+                file_path,
+                title,
+                artist,
+                album,
+            }) => need_whisper.push((track_id, file_path, title, artist, album)),
+            Ok(AcquireOutcome::Failed { track_id, message }) => {
+                emit_phase(app, track_id, "failed", Some(message.clone()));
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed { track_id, message },
+                );
+            }
+            Err(_) => {
+                // Worker panicked; no track id available here.
+            }
+        }
+    }
+
+    for (track_id, file_path, title, artist, album) in need_whisper {
+        emit_phase(app, track_id, "transcribing", None);
+        match acquire_via_whisper(app, track_id, &file_path, &title, artist.as_deref(), album.as_deref())
+        {
+            Ok(item) => acquired.push(item),
+            Err(message) => {
+                emit_phase(app, track_id, "failed", Some(message.clone()));
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed { track_id, message },
+                );
+            }
+        }
+    }
+
+    batch_translate_acquired(app, &acquired);
+}
+
+fn acquire_lyrics_non_whisper(app: &AppHandle, track_id: i64) -> AcquireOutcome {
+    let _ = bump_preview_generation(track_id);
+    emit_phase(app, track_id, "searching", None);
+
+    let conn = match storage::open(app) {
+        Ok(c) => c,
+        Err(message) => return AcquireOutcome::Failed { track_id, message },
+    };
+    let track = match storage::get_track_by_id(&conn, track_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return AcquireOutcome::Failed {
+                track_id,
+                message: format!("track not found: {track_id}"),
+            };
+        }
+        Err(message) => return AcquireOutcome::Failed { track_id, message },
+    };
+
+    let path = Path::new(&track.file_path);
+    if !path.is_file() {
+        return AcquireOutcome::Failed {
+            track_id,
+            message: format!("file not found: {}", track.file_path),
+        };
+    }
+    let meta = read_file_metadata(path);
+
+    let matches = match lrclib::search_track(&track.title, track.artist.as_deref()) {
+        Ok(m) => m,
+        Err(_) => Vec::new(),
+    };
+
+    if let Some(chosen) = select_lrclib_by_duration(track.duration_ms.or(meta.duration_ms), &matches)
+    {
+        match lrclib::lyrics_for_id(chosen.id) {
+            Ok(text) => {
+                let lyric_lines = split_lyric_lines(&text);
+                if lyric_lines.is_empty() {
+                    // Fall through toward tags / Whisper.
+                } else {
+                    return finalize_acquired(
+                        app,
+                        track_id,
+                        &track,
+                        &meta,
+                        lyric_lines,
+                        "lrclib",
+                        None,
+                    );
+                }
+            }
+            Err(_) => {
+                // Fall through toward tags / Whisper.
+            }
+        }
+    }
+
+    if !meta.lyric_lines.is_empty() {
+        return finalize_acquired(
+            app,
+            track_id,
+            &track,
+            &meta,
+            meta.lyric_lines.clone(),
+            "embedded",
+            None,
+        );
+    }
+
+    AcquireOutcome::NeedWhisper {
+        track_id,
+        file_path: track.file_path.clone(),
+        title: track.title.clone(),
+        artist: track.artist.clone(),
+        album: track.album.clone(),
+    }
+}
+
+fn acquire_via_whisper(
+    app: &AppHandle,
+    track_id: i64,
+    file_path: &str,
+    title: &str,
+    artist: Option<&str>,
+    album: Option<&str>,
+) -> Result<AcquiredLyrics, String> {
+    let conn = storage::open(app)?;
+    let track = storage::get_track_by_id(&conn, track_id)?
+        .ok_or_else(|| format!("track not found: {track_id}"))?;
+    let path = Path::new(file_path);
+    let meta = read_file_metadata(path);
+
+    let asr = sidecar::transcribe(
+        file_path,
+        meta.title.as_deref().or(Some(title)),
+        meta.artist.as_deref().or(artist),
+        meta.album.as_deref().or(album),
+    )?;
+    if asr.lines.is_empty() {
+        return Err("No lyrics found via transcription.".to_string());
+    }
+
+    match finalize_acquired(
+        app,
+        track_id,
+        &track,
+        &meta,
+        asr.lines,
+        "asr",
+        asr.language,
+    ) {
+        AcquireOutcome::Ready(item) => Ok(item),
+        AcquireOutcome::Failed { message, .. } => Err(message),
+        AcquireOutcome::NeedWhisper { .. } => {
+            Err("Unexpected whisper requeue".to_string())
+        }
+    }
+}
+
+fn finalize_acquired(
+    app: &AppHandle,
+    track_id: i64,
+    track: &Track,
+    meta: &FileMetadata,
+    lyric_lines: Vec<(Option<i64>, String)>,
+    source: &str,
+    whisper_language: Option<String>,
+) -> AcquireOutcome {
+    let conn = match storage::open(app) {
+        Ok(c) => c,
+        Err(message) => return AcquireOutcome::Failed { track_id, message },
+    };
+
+    if let Err(message) = storage::replace_lyrics(&conn, track_id, &lyric_lines, source) {
+        return AcquireOutcome::Failed { track_id, message };
+    }
+
+    // Upload auto-pipeline always auto-detects (ignores prior manual override).
+    let _ = storage::clear_language_manual(&conn, track_id);
+    let language_code = apply_detected_language(
+        &conn,
+        track_id,
+        &lyric_lines,
+        meta.title.as_deref().or(Some(track.title.as_str())),
+        meta.artist.as_deref().or(track.artist.as_deref()),
+        meta.album.as_deref().or(track.album.as_deref()),
+        Some(&track.file_path),
+        whisper_language,
+    );
+
+    AcquireOutcome::Ready(AcquiredLyrics {
+        track_id,
+        lyric_lines,
+        language_code,
+    })
+}
+
+fn batch_translate_acquired(app: &AppHandle, acquired: &[AcquiredLyrics]) {
+    if acquired.is_empty() {
+        return;
+    }
+
+    let conn = match storage::open(app) {
+        Ok(c) => c,
+        Err(message) => {
+            for item in acquired {
+                emit_phase(app, item.track_id, "failed", Some(message.clone()));
+                let _ = app.emit(
+                    "pipeline-failed",
+                    &PipelineFailed {
+                        track_id: item.track_id,
+                        message: message.clone(),
+                    },
+                );
+            }
+            return;
+        }
+    };
+
+    let target = DEFAULT_TARGET_LANGUAGE;
+    let mut groups: HashMap<String, Vec<&AcquiredLyrics>> = HashMap::new();
+    for item in acquired {
+        let key = item
+            .language_code
+            .as_deref()
+            .map(primary_language_tag)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_default();
+        groups.entry(key).or_default().push(item);
+    }
+
+    let credentials = resolve_translate_credentials(&conn);
+
+    for (lang_key, group) in groups {
+        if lang_key == target {
+            for item in &group {
+                finish_track_ready(app, item.track_id);
+            }
+            continue;
+        }
+
+        for item in &group {
+            emit_phase(app, item.track_id, "translating", None);
+        }
+
+        let Some(ref creds) = credentials else {
+            // Soft-fail translation: originals already saved.
+            for item in &group {
+                finish_track_ready(app, item.track_id);
+            }
+            continue;
+        };
+
+        let source_language = if lang_key.is_empty() {
+            None
+        } else {
+            Some(lang_key.as_str())
+        };
+
+        let documents: Vec<(String, Vec<(i64, String)>)> = group
+            .iter()
+            .map(|item| {
+                let lines = item
+                    .lyric_lines
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, text))| (i as i64, text.clone()))
+                    .collect();
+                (item.track_id.to_string(), lines)
+            })
+            .collect();
+
+        match sidecar::translate_align_documents(&documents, target, source_language, creds) {
+            Ok(translated) => {
+                for doc in translated {
+                    if let Ok(track_id) = doc.id.parse::<i64>() {
+                        if !doc.lines.is_empty() {
+                            let _ = storage::apply_line_translations(&conn, track_id, &doc.lines);
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // Soft-fail: keep originals for the whole language group.
+            }
+        }
+
+        for item in &group {
+            finish_track_ready(app, item.track_id);
+        }
+    }
+}
+
+fn finish_track_ready(app: &AppHandle, track_id: i64) {
+    emit_phase(app, track_id, "ready", None);
+    if let Ok(conn) = storage::open(app) {
+        if let Ok(Some(track)) = storage::get_track_by_id(&conn, track_id) {
+            let _ = app.emit("pipeline-finished", &track);
+            return;
+        }
+    }
+    let _ = app.emit(
+        "pipeline-failed",
+        &PipelineFailed {
+            track_id,
+            message: format!("track missing after pipeline: {track_id}"),
+        },
+    );
 }
 
 /// Spawn lyrics + language work off the UI thread and emit completion events.
@@ -575,6 +1019,7 @@ fn apply_detected_language(
     language
 }
 
+#[derive(Clone)]
 struct FileMetadata {
     title: Option<String>,
     artist: Option<String>,

@@ -30,11 +30,23 @@ Short target-language gloss for one token of the original line. Stored in `lyric
 
 ## Primary language tag
 
-The first subtag of a language code (`en-US` → `en`, `zh` → `zh`). Used to decide whether to skip translation when it equals the target (`en`).
+The first subtag of a language code (`en-US` → `en`, `zh` → `zh`). Used to decide whether to skip translation when it equals the target (`en`), and to group tracks for a translate batch.
+
+## Duration match (±1s)
+
+Rule for auto-selecting an LRCLIB search hit: both the track’s `duration_ms` and the match’s `durationSeconds` must be present and positive, and `|trackSeconds − matchSeconds| ≤ 1.0`. Among hits in the window, pick the closest duration; equal deltas keep earlier LRCLIB API order. Missing duration on either side means that candidate (or the whole search) is not auto-selected. Used by upload auto-pipeline and Edit search (`preferredMatchId`).
+
+## Upload auto-pipeline
+
+Background job started when the user imports one or more audio files. For each track: upsert metadata → acquire lyrics (duration-matched LRCLIB → embedded tags → Whisper) → auto-detect language → after the whole set finishes acquisition, **translate batch** by language. Emits `pipeline-phase` / `pipeline-finished` / `pipeline-failed`. Soft-fails individual tracks. Re-uploading the same path re-runs the pipeline.
+
+## translate batch
+
+One sidecar `POST /translate-align` call with multiple `documents` (same source language) for an upload set. Tracks are grouped by primary language tag after acquisition; English groups are skipped; unknown/`null` language is one group with `sourceLanguage: null`. Edit Process still sends a single document.
 
 ## translate-align
 
-Sidecar endpoint `POST /translate-align`. Accepts one or more lyrics **documents** of the same source language and returns per-line `sense` + `words` glosses. v1 Process sends one document with all lines; the multi-document shape is for future multi-song batching.
+Sidecar endpoint `POST /translate-align`. Accepts one or more lyrics **documents** of the same source language and returns per-line `sense` + `words` glosses.
 
 ## Translation API key
 
@@ -42,8 +54,8 @@ Credential for the Google Gemini LLM provider (Flash by default). Precedence: Se
 
 ## Select-time detection
 
-On Edit, when the user selects an LRCLIB matching song (including the auto-selected first result), Melodica fetches that match’s lyrics and runs language detection **without** writing `lyrics_cache`. The result is stored on `tracks.language_code` with `language_manual=false` and shown in Song language. Soft-fails leave the code empty and show a hint. Manual overrides are sticky until Auto-detect. Lyrics persist and translation run only on **Process**.
+On Edit, when the user selects an LRCLIB matching song (including the duration-matched auto-select), Melodica fetches that match’s lyrics and runs language detection **without** writing `lyrics_cache`. The result is stored on `tracks.language_code` with `language_manual=false` and shown in Song language. Soft-fails leave the code empty and show a hint. Manual overrides are sticky until Auto-detect. Lyrics persist and translation run only on **Process** (or upload auto-pipeline).
 
 ## Process (lyrics pipeline)
 
-Edit action that commits lyrics then translation: resolve source (paste > LRCLIB id > embedded tags > Whisper) → save originals to `lyrics_cache` → re-detect language when not manual → `translate-align` for non-English (soft-fail). Song language changes alone never Process.
+Edit action that commits lyrics then translation: resolve source (paste > LRCLIB id > embedded tags > Whisper) → save originals to `lyrics_cache` → re-detect language when not manual → `translate-align` for non-English (soft-fail). Song language changes alone never Process. Upload uses **upload auto-pipeline** instead of requiring this button.

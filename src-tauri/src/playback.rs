@@ -89,6 +89,11 @@ impl PlaybackEngine {
         self.status()
     }
 
+    /// Sets playback volume. `1.0` is unity gain; values are clamped to `[0.0, 1.0]`.
+    pub fn set_volume(&mut self, volume: f32) {
+        self.player.set_volume(volume.clamp(0.0, 1.0));
+    }
+
     pub fn seek(&mut self, position_ms: u64) -> Result<PlaybackStatus, String> {
         if self.track_id.is_none() || self.player.empty() {
             return Err("nothing is playing".to_string());

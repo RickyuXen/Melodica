@@ -44,12 +44,12 @@ export async function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
 }
 
-/** Opens a native file picker and returns the selected path, or null if cancelled. */
-export async function pickAudioFile(): Promise<string | null> {
+/** Opens a native file picker and returns selected paths, or [] if cancelled. */
+export async function pickAudioFiles(): Promise<string[]> {
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
-    multiple: false,
-    title: "Choose a music file",
+    multiple: true,
+    title: "Choose music files",
     filters: [
       {
         name: "Audio",
@@ -58,15 +58,29 @@ export async function pickAudioFile(): Promise<string | null> {
     ],
   });
 
-  if (selected === null || Array.isArray(selected)) {
-    return null;
+  if (selected === null) {
+    return [];
   }
-  return selected;
+  if (Array.isArray(selected)) {
+    return selected;
+  }
+  return [selected];
 }
 
-/** Sends the chosen file into the Rust pipeline; returns as soon as the track row exists. */
+/** @deprecated Prefer pickAudioFiles; kept for single-path callers. */
+export async function pickAudioFile(): Promise<string | null> {
+  const paths = await pickAudioFiles();
+  return paths[0] ?? null;
+}
+
+/** Upserts one file and starts the upload auto-pipeline. */
 export async function processUpload(filePath: string): Promise<Track> {
   return invoke<Track>("process_upload", { filePath });
+}
+
+/** Upserts many files and starts the upload auto-pipeline (batched translate). */
+export async function processUploads(filePaths: string[]): Promise<Track[]> {
+  return invoke<Track[]>("process_uploads", { filePaths });
 }
 
 export type LyricsMatch = {
@@ -94,6 +108,7 @@ export type LyricsSearchFinished = {
   trackId: number;
   query: string | null;
   matches: LyricsMatch[];
+  preferredMatchId: number | null;
 };
 
 export type LyricsSearchFailed = {
@@ -207,6 +222,12 @@ export type PipelineFailed = {
   message: string;
 };
 
+export type PipelinePhase = {
+  trackId: number;
+  phase: string;
+  message: string | null;
+};
+
 export async function onPipelineFinished(
   handler: (track: Track) => void,
 ): Promise<() => void> {
@@ -222,6 +243,16 @@ export async function onPipelineFailed(
 ): Promise<() => void> {
   const { listen } = await import("@tauri-apps/api/event");
   const unlisten = await listen<PipelineFailed>("pipeline-failed", (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}
+
+export async function onPipelinePhase(
+  handler: (event: PipelinePhase) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<PipelinePhase>("pipeline-phase", (event) => {
     handler(event.payload);
   });
   return unlisten;
@@ -275,4 +306,9 @@ export async function playbackSeek(positionMs: number): Promise<PlaybackStatus> 
 
 export async function playbackStatus(): Promise<PlaybackStatus> {
   return invoke<PlaybackStatus>("playback_status");
+}
+
+/** Sets playback volume in the range `[0, 1]`. */
+export async function setVolume(volume: number): Promise<void> {
+  return invoke<void>("set_volume", { volume });
 }
