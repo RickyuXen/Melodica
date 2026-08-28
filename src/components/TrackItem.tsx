@@ -5,6 +5,21 @@ import { LyricsEditor, type TrackSearchState } from "./LyricsEditor";
 
 type LyricsState = LyricLine[] | "loading" | "error" | undefined;
 
+function phaseLabel(phase: string | null | undefined): string {
+  switch (phase) {
+    case "importing":
+      return "Importing…";
+    case "searching":
+      return "Finding lyrics…";
+    case "transcribing":
+      return "Transcribing…";
+    case "translating":
+      return "Translating…";
+    default:
+      return "Processing…";
+  }
+}
+
 type TrackItemProps = {
   track: Track;
   mode: "library" | "edit";
@@ -12,6 +27,7 @@ type TrackItemProps = {
   lyricsOpen: boolean;
   isCurrent: boolean;
   isProcessing: boolean;
+  processingPhase?: string | null;
   playing: boolean;
   positionMs: number;
   durationMs: number;
@@ -25,6 +41,10 @@ type TrackItemProps = {
   searchState: TrackSearchState | undefined;
   onRequestSearch: (query: string) => void;
   onProcessLyrics: (pasted: string, lrclibId: number | null) => void;
+  onSetLanguage: (languageCode: string | null, lrclibId: number | null) => void;
+  onPreviewLanguage: (lrclibId: number | null) => void;
+  isDetectingLanguage: boolean;
+  languagePreviewWarning: string | null;
 };
 
 export function TrackItem({
@@ -34,6 +54,7 @@ export function TrackItem({
   lyricsOpen,
   isCurrent,
   isProcessing,
+  processingPhase = null,
   playing,
   positionMs,
   durationMs,
@@ -47,6 +68,10 @@ export function TrackItem({
   searchState,
   onRequestSearch,
   onProcessLyrics,
+  onSetLanguage,
+  onPreviewLanguage,
+  isDetectingLanguage,
+  languagePreviewWarning,
 }: TrackItemProps) {
   const seekMax = Math.max(durationMs, 1);
 
@@ -63,7 +88,9 @@ export function TrackItem({
               </span>
             )}
             {isProcessing && (
-              <span className="processing-tag">Processing…</span>
+              <span className="processing-tag">
+                {phaseLabel(processingPhase)}
+              </span>
             )}
           </div>
           <div className="track-actions">
@@ -121,6 +148,7 @@ export function TrackItem({
         <div className="lyrics-panel">
           <LyricsDisplay
             lyrics={lyrics}
+            languageCode={track.languageCode}
             positionMs={positionMs}
             isCurrent={isCurrent}
             onSeekLine={onSeekCommit}
@@ -133,11 +161,17 @@ export function TrackItem({
           trackId={track.id}
           trackTitle={track.title}
           trackArtist={track.artist}
+          languageCode={track.languageCode}
+          languageManual={track.languageManual}
           lyrics={lyrics}
           isProcessing={isProcessing}
+          isDetectingLanguage={isDetectingLanguage}
+          languagePreviewWarning={languagePreviewWarning}
           searchState={searchState}
           onRequestSearch={onRequestSearch}
           onProcessLyrics={onProcessLyrics}
+          onSetLanguage={onSetLanguage}
+          onPreviewLanguage={onPreviewLanguage}
         />
       )}
     </li>

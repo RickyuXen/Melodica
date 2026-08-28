@@ -17,6 +17,15 @@ export function languageLabel(code: string): string {
   }
 }
 
+/** Primary language subtag (`en-US` → `en`). */
+export function primaryLanguageTag(
+  code: string | null | undefined,
+): string | null {
+  if (!code) return null;
+  const primary = code.trim().toLowerCase().split(/[-_]/)[0];
+  return primary || null;
+}
+
 export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;

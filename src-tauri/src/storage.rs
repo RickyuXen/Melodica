@@ -1,7 +1,7 @@
 //! SQLite library storage — schema from plan.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -15,7 +15,16 @@ pub struct Track {
     pub album: Option<String>,
     pub duration_ms: Option<i64>,
     pub language_code: Option<String>,
+    /// True when the user set language in Edit (Process must not overwrite).
+    pub language_manual: bool,
     pub added_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordGloss {
+    pub text: String,
+    pub gloss: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,7 +36,16 @@ pub struct LyricLine {
     pub timestamp_ms: Option<i64>,
     pub original_text: String,
     pub translated_text: Option<String>,
+    pub word_glosses: Option<Vec<WordGloss>>,
     pub source: String,
+}
+
+/// One line's translation payload written after Process.
+#[derive(Debug, Clone)]
+pub struct LineTranslation {
+    pub line_index: i64,
+    pub translated_text: String,
+    pub word_glosses: Vec<WordGloss>,
 }
 
 pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -59,6 +77,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             album TEXT,
             duration_ms INTEGER,
             language_code TEXT,
+            language_manual INTEGER NOT NULL DEFAULT 0,
             added_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -91,9 +110,27 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
             played_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL
+        );
         "#,
     )
     .map_err(|e| format!("migrate: {e}"))?;
+
+    // Existing installs may lack word_glosses; ignore duplicate-column errors.
+    let _ = conn.execute(
+        "ALTER TABLE lyrics_cache ADD COLUMN word_glosses TEXT",
+        [],
+    );
+
+    // Manual language override from Edit; ignore if column already exists.
+    let _ = conn.execute(
+        "ALTER TABLE tracks ADD COLUMN language_manual INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
     Ok(())
 }
 
@@ -160,15 +197,45 @@ pub fn replace_lyrics(
     Ok(())
 }
 
+/// Write line sense + word glosses onto existing lyric rows (by line_index).
+pub fn apply_line_translations(
+    conn: &Connection,
+    track_id: i64,
+    translations: &[LineTranslation],
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "UPDATE lyrics_cache
+             SET translated_text = ?1, word_glosses = ?2
+             WHERE track_id = ?3 AND line_index = ?4",
+        )
+        .map_err(|e| format!("prepare translation update: {e}"))?;
+
+    for item in translations {
+        let glosses_json = serde_json::to_string(&item.word_glosses)
+            .map_err(|e| format!("serialize word glosses: {e}"))?;
+        stmt.execute(params![
+            item.translated_text,
+            glosses_json,
+            track_id,
+            item.line_index
+        ])
+        .map_err(|e| format!("update lyric translation: {e}"))?;
+    }
+
+    Ok(())
+}
+
 pub fn set_language_code(
     conn: &Connection,
     track_id: i64,
     language_code: &str,
+    manual: bool,
 ) -> Result<(), String> {
     let updated = conn
         .execute(
-            "UPDATE tracks SET language_code = ?1 WHERE id = ?2",
-            params![language_code, track_id],
+            "UPDATE tracks SET language_code = ?1, language_manual = ?2 WHERE id = ?3",
+            params![language_code, if manual { 1 } else { 0 }, track_id],
         )
         .map_err(|e| format!("update language: {e}"))?;
 
@@ -178,7 +245,88 @@ pub fn set_language_code(
     Ok(())
 }
 
+pub fn clear_language_manual(conn: &Connection, track_id: i64) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE tracks SET language_manual = 0 WHERE id = ?1",
+            params![track_id],
+        )
+        .map_err(|e| format!("clear language manual: {e}"))?;
+
+    if updated == 0 {
+        return Err(format!("track not found: {track_id}"));
+    }
+    Ok(())
+}
+
+/// Clear `language_code` (used when switching LRCLIB matches before Process).
+pub fn clear_language_code(conn: &Connection, track_id: i64) -> Result<(), String> {
+    let updated = conn
+        .execute(
+            "UPDATE tracks SET language_code = NULL WHERE id = ?1",
+            params![track_id],
+        )
+        .map_err(|e| format!("clear language code: {e}"))?;
+
+    if updated == 0 {
+        return Err(format!("track not found: {track_id}"));
+    }
+    Ok(())
+}
+
+/// Drop sense/gloss columns so a language change does not leave stale help text.
+pub fn clear_line_translations(conn: &Connection, track_id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE lyrics_cache SET translated_text = NULL, word_glosses = NULL WHERE track_id = ?1",
+        params![track_id],
+    )
+    .map_err(|e| format!("clear lyric translations: {e}"))?;
+    Ok(())
+}
+
+const TRANSLATE_API_KEY: &str = "translate_api_key";
+
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT value FROM app_settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| format!("get setting: {e}"))
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map_err(|e| format!("set setting: {e}"))?;
+    Ok(())
+}
+
+pub fn delete_setting(conn: &Connection, key: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])
+        .map_err(|e| format!("delete setting: {e}"))?;
+    Ok(())
+}
+
+pub fn get_translate_api_key(conn: &Connection) -> Result<Option<String>, String> {
+    Ok(get_setting(conn, TRANSLATE_API_KEY)?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty()))
+}
+
+pub fn set_translate_api_key(conn: &Connection, key: Option<&str>) -> Result<(), String> {
+    match key.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => set_setting(conn, TRANSLATE_API_KEY, value),
+        None => delete_setting(conn, TRANSLATE_API_KEY),
+    }
+}
+
 /// Wipe all library data and reset autoincrement counters so the DB is empty.
+/// Preserves app_settings (API key, etc.).
 pub fn reset_database(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
@@ -188,7 +336,10 @@ pub fn reset_database(conn: &Connection) -> Result<(), String> {
         DELETE FROM playlists;
         DELETE FROM lyrics_cache;
         DELETE FROM tracks;
-        DELETE FROM sqlite_sequence;
+        DELETE FROM sqlite_sequence
+          WHERE name IN (
+            'play_history', 'playlist_tracks', 'playlists', 'lyrics_cache', 'tracks'
+          );
         "#,
     )
     .map_err(|e| format!("reset database: {e}"))?;
@@ -198,7 +349,8 @@ pub fn reset_database(conn: &Connection) -> Result<(), String> {
 pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+            "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                    language_manual, added_at
              FROM tracks
              ORDER BY added_at DESC, id DESC",
         )
@@ -218,7 +370,8 @@ pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
 pub fn get_lyrics(conn: &Connection, track_id: i64) -> Result<Vec<LyricLine>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, track_id, line_index, timestamp_ms, original_text, translated_text, source
+            "SELECT id, track_id, line_index, timestamp_ms, original_text, translated_text,
+                    word_glosses, source
              FROM lyrics_cache
              WHERE track_id = ?1
              ORDER BY line_index ASC",
@@ -227,6 +380,7 @@ pub fn get_lyrics(conn: &Connection, track_id: i64) -> Result<Vec<LyricLine>, St
 
     let rows = stmt
         .query_map(params![track_id], |row| {
+            let glosses_raw: Option<String> = row.get(6)?;
             Ok(LyricLine {
                 id: row.get(0)?,
                 track_id: row.get(1)?,
@@ -234,7 +388,8 @@ pub fn get_lyrics(conn: &Connection, track_id: i64) -> Result<Vec<LyricLine>, St
                 timestamp_ms: row.get(3)?,
                 original_text: row.get(4)?,
                 translated_text: row.get(5)?,
-                source: row.get(6)?,
+                word_glosses: parse_word_glosses(glosses_raw),
+                source: row.get(7)?,
             })
         })
         .map_err(|e| format!("get lyrics: {e}"))?;
@@ -246,9 +401,18 @@ pub fn get_lyrics(conn: &Connection, track_id: i64) -> Result<Vec<LyricLine>, St
     Ok(lines)
 }
 
+fn parse_word_glosses(raw: Option<String>) -> Option<Vec<WordGloss>> {
+    let raw = raw?.trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    serde_json::from_str(&raw).ok()
+}
+
 fn get_track_by_path(conn: &Connection, file_path: &str) -> Result<Option<Track>, String> {
     conn.query_row(
-        "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
          FROM tracks WHERE file_path = ?1",
         params![file_path],
         map_track,
@@ -259,7 +423,8 @@ fn get_track_by_path(conn: &Connection, file_path: &str) -> Result<Option<Track>
 
 pub fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, String> {
     conn.query_row(
-        "SELECT id, file_path, title, artist, album, duration_ms, language_code, added_at
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
          FROM tracks WHERE id = ?1",
         params![id],
         map_track,
@@ -269,6 +434,7 @@ pub fn get_track_by_id(conn: &Connection, id: i64) -> Result<Option<Track>, Stri
 }
 
 fn map_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
+    let language_manual: i64 = row.get(7)?;
     Ok(Track {
         id: row.get(0)?,
         file_path: row.get(1)?,
@@ -277,7 +443,8 @@ fn map_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         album: row.get(4)?,
         duration_ms: row.get(5)?,
         language_code: row.get(6)?,
-        added_at: row.get(7)?,
+        language_manual: language_manual != 0,
+        added_at: row.get(8)?,
     })
 }
 

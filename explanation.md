@@ -15,7 +15,7 @@ Melodica is one downloadable desktop app made of three cooperating layers. Tauri
 └─────────────────────────────────────────────┘
 ```
 
-Today only the UI ↔ Rust bridge is live. Playback, storage, and the sidecar pipeline are stubbed for later.
+Today the full loop is live: library upload (multi-file auto-pipeline), playback, LRCLIB, SQLite cache, Edit Process, and the Python sidecar for ASR / detect / translate-align.
 
 ---
 
@@ -37,7 +37,7 @@ Config lives in `src-tauri/tauri.conf.json` (window title/size, how to start/bui
 
 ## React + TypeScript: the UI layer (`src/`)
 
-React draws everything the user interacts with: now a minimal shell; later player controls, library, and the lyrics side panel.
+React draws Home / Upload / Edit / Settings: library, player controls, lyrics panels, and status for the upload auto-pipeline.
 
 It does **not** decode audio, talk to SQLite, or call LRCLIB directly. Those belong in Rust (and the sidecar). The UI asks Rust to do things and renders the results.
 
@@ -49,13 +49,14 @@ Tauri provides `invoke()` from `@tauri-apps/api`. The UI calls a named Rust comm
 App.tsx  →  getAppInfo() in src/lib/tauri.ts  →  invoke("app_info")  →  Rust fn app_info()
 ```
 
-That is the pattern for every future feature:
+That is the pattern for every feature:
 
-| User action (UI)  | Rust command (example) | Rust responsibility       |
-| ----------------- | ---------------------- | ------------------------- |
-| Play / pause      | `playback_toggle`      | Drive the audio backend   |
-| Import a folder   | `library_import`       | Scan files, read tags     |
-| Show lyrics panel | `lyrics_for_track`     | Load cache or ask sidecar |
+| User action (UI)        | Rust command (example) | Rust responsibility                          |
+| ----------------------- | ---------------------- | -------------------------------------------- |
+| Play / pause            | `playback_toggle`      | Drive the audio backend                      |
+| Choose music files      | `process_uploads`      | Upsert tracks + upload auto-pipeline         |
+| Process lyrics (Edit)   | `process_lyrics`       | Save lyrics + per-track translate            |
+| View lyrics             | `get_lyrics`           | Load `lyrics_cache`                          |
 
 React stays thin: state, layout, and calling into Rust.
 
@@ -68,10 +69,12 @@ Rust is Melodica’s **native brain**. It sits between the webview and the machi
 ### What Rust owns (by design)
 
 - **IPC bridge** — commands the UI can call (`#[tauri::command]` in `lib.rs`).
-- **Playback** — decode + output (`playback.rs`; planned: symphonia + rodio).
+- **Playback** — decode + output (`playback.rs`; symphonia + rodio).
 - **Tags & library files** — read metadata from audio files.
 - **Storage** — SQLite for tracks, lyrics cache, playlists (`storage.rs`).
+- **LRCLIB** — search/fetch and duration-matched auto-select (`lrclib.rs` / `pipeline.rs`).
 - **Sidecar client** — HTTP to the Python service on localhost (`sidecar.rs`).
+- **Upload auto-pipeline** — acquire lyrics (parallel LRCLIB, serial Whisper), batch translate by language.
 
 ### Why Rust sits in the middle
 
@@ -86,7 +89,7 @@ So the “pipelining” for a song (import → lyrics → detect language → tr
 
 ### Current wiring
 
-`lib.rs` registers `app_info` and starts the Tauri builder. Stub modules exist so playback, storage, and sidecar can grow without reshaping the app.
+`lib.rs` registers playback, library, lyrics, upload, and settings commands and starts the Tauri builder. `pipeline.rs` orchestrates upload auto-pipeline and Edit Process.
 
 ---
 
@@ -94,12 +97,13 @@ So the “pipelining” for a song (import → lyrics → detect language → tr
 
 The sidecar is a **small FastAPI server bound to `127.0.0.1`**. It is not the UI and not the player. It exists because Python’s NLP/ASR ecosystem (fastText, Whisper, LLM clients) is stronger for Melodica’s lyrics pipeline.
 
-### Planned responsibilities
+### Responsibilities
 
 - Language detection on lyrics text
-- Lyrics fetch (e.g. LRCLIB)
-- Translation + line alignment
-- Transcription fallback when no lyrics exist
+- Translation + line alignment (`/translate-align`, multi-document)
+- Transcription fallback when no lyrics exist (`/transcribe`)
+
+LRCLIB search/fetch lives in Rust, not the sidecar.
 
 ### How it connects
 
@@ -107,25 +111,20 @@ The sidecar is a **small FastAPI server bound to `127.0.0.1`**. It is not the UI
 UI  →  Rust command  →  Rust HTTP client  →  http://127.0.0.1:8765/...  →  FastAPI
 ```
 
-React never talks to Python. Rust does, then returns structured data (original/translated lines, timestamps, language code) for the UI to render.
+React never talks to Python. Rust does, then returns structured data (original lines, word glosses, sentence sense, timestamps, language code) for the UI to render.
 
-Right now only `/health` exists. The sidecar is not started or called by Tauri yet; you can run it separately with `npm run sidecar:dev`.
-
-Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves. Target packaging path: freeze the FastAPI service (e.g. PyInstaller) → register as Tauri `externalBin` → spawn/kill with the app lifecycle → ship via `tauri build` (installer or portable folder). End users should never need Node, Rust, or a manual `npm run sidecar:dev`. Details: [`PRODUCT.md`](./PRODUCT.md) (distribution intent) and [`README.md`](./README.md#distribution-end-user-packaging).
+The sidecar exposes `/health`, `/transcribe`, `/detect-language`, and `/translate-align`. Developers run it with `npm run sidecar:dev`. Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves. Target packaging path: freeze the FastAPI service (e.g. PyInstaller) → register as Tauri `externalBin` → spawn/kill with the app lifecycle → ship via `tauri build` (installer or portable folder). End users should never need Node, Rust, or a manual `npm run sidecar:dev`. Details: [`PRODUCT.md`](./PRODUCT.md) (distribution intent) and [`README.md`](./README.md#distribution-end-user-packaging).
 
 ---
 
-## End-to-end flow (target product)
+## End-to-end flow
 
-Once the pipeline is built, a typical song path looks like this:
+1. **User imports one or more files** in the React UI.
+2. **Rust** upserts tracks, runs upload auto-pipeline (duration-matched LRCLIB → tags → Whisper), detects language, then batch-translates by language via the sidecar.
+3. **Rust** stores aligned lines in `lyrics_cache`.
+4. **React** shows per-track phase status, then Home View lyrics (glosses + sense) synced to playback.
 
-1. **User imports music** in the React UI.
-2. **Rust** scans files, reads tags, writes rows to SQLite, and can start playback.
-3. When lyrics are needed, **Rust** asks the **Python sidecar** to fetch/detect/translate (or use Whisper as fallback).
-4. **Rust** stores the aligned lines in `lyrics_cache`.
-5. **React** displays original + translation, synced to playback position Rust reports.
-
-Optional internet use happens only inside the sidecar (lyrics APIs / cloud translation). Playback and the library stay local.
+Edit remains for paste, language override, and manual Process. Optional internet use happens for LRCLIB, Gemini translation, and (when needed) Whisper model download. Playback and the library stay local.
 
 ---
 
@@ -140,12 +139,12 @@ Optional internet use happens only inside the sidecar (lyrics APIs / cloud trans
 
 ---
 
-## What “connected” means today vs later
+## What “connected” means
 
-| Link              | Today                   | Later                                    |
-| ----------------- | ----------------------- | ---------------------------------------- |
-| React ↔ Rust      | `app_info` via `invoke` | Playback, library, lyrics commands       |
-| Rust ↔ Python     | Stub module only        | Localhost HTTP for the language pipeline |
-| Tauri ↔ installer | `tauri build` packaging | Bundle sidecar binary with the app       |
+| Link              | Today                                                         | Still planned                         |
+| ----------------- | ------------------------------------------------------------- | ------------------------------------- |
+| React ↔ Rust      | Playback, library, upload auto-pipeline, Edit Process, settings | —                                     |
+| Rust ↔ Python     | Localhost HTTP for transcribe / detect / translate-align      | Bundle sidecar as `externalBin`       |
+| Tauri ↔ installer | `tauri build` packaging                                       | Ship sidecar with the app             |
 
 Tauri + React give you the downloadable window and UI. Rust owns core logic and orchestration. Python handles language understanding when Rust asks for it.
