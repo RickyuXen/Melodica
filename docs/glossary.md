@@ -26,7 +26,19 @@ Persistent player footer in the main column (80% width), visible on every tab. H
 
 ## Home split view
 
-Home tab layout: compact library list (left, 25%) and lyrics pane (right, 75%). Selecting a library row auto-plays the track and shows `LyricsDisplay` with karaoke highlight, seek-to-line, and the dual study translation layout.
+Home tab layout: library list (left, 25% in split mode) and lyrics pane (right, 75%). Selecting a library row auto-plays the track and shows `LyricsDisplay` with karaoke highlight, seek-to-line, and the dual study translation layout. The library supports search, column sort (default title A→Z), and pane expand/contract controls.
+
+## Library pane mode
+
+Session-scoped layout for the Home or Edit split: `split` (default 25/75), `list-only` (full song list), or `lyrics-only` (lyrics/editor only). Controlled by toolbar buttons in the track list pane; resets on app launch.
+
+## Track list sort
+
+Frontend-only ordering of library rows by title, artist, or language. Default is title ascending. Clicking a column header sorts by that field; clicking the active column toggles ascending/descending. Does not affect playback next/prev order (still `added_at DESC` in the backend).
+
+## Track list search
+
+Filter above the library grid. Case-insensitive match against track title, artist, and human-readable language name. Empty results show “No matching songs.”
 
 ## View lyrics
 

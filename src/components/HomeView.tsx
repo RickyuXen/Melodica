@@ -1,4 +1,6 @@
 import type { LyricLine, Track } from "../lib/tauri";
+import { paneModeClass } from "../lib/trackList";
+import { useTrackListControls } from "../hooks/useTrackListControls";
 import { LyricsDisplay } from "./LyricsDisplay";
 import { LibraryTrackList } from "./LibraryTrackList";
 
@@ -29,20 +31,38 @@ export function HomeView({
   onSelectTrack,
   onSeekLine,
 }: HomeViewProps) {
+  const {
+    searchQuery,
+    setSearchQuery,
+    sortKey,
+    sortDir,
+    paneMode,
+    setPaneMode,
+    displayTracks,
+    toggleSort,
+  } = useTrackListControls(tracks);
+
   const openTrack =
     openTrackId != null ? tracks.find((t) => t.id === openTrackId) : undefined;
 
   return (
-    <div className="home-split">
+    <div className={paneModeClass("home-split", paneMode)}>
       <div className="home-split-list track-list-pane">
-        <h2 className="home-split-heading">Library</h2>
-        <br></br>
+        <h2 className="home-split-heading" style={{ marginBottom: "10px" }}>Library</h2>
         <LibraryTrackList
-          tracks={tracks}
+          tracks={displayTracks}
+          totalCount={tracks.length}
           openTrackId={openTrackId}
           playingTrackId={playingTrackId}
           processingIds={processingIds}
           pipelinePhaseByTrack={pipelinePhaseByTrack}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          searchQuery={searchQuery}
+          paneMode={paneMode}
+          onSearchChange={setSearchQuery}
+          onPaneModeChange={setPaneMode}
+          onSort={toggleSort}
           onSelect={onSelectTrack}
         />
       </div>

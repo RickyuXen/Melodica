@@ -1,4 +1,6 @@
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { languageLabel } from "../lib/format";
+import type { SortDir, SortKey } from "../lib/trackList";
 
 type TrackListRowProps = {
   title: string;
@@ -61,12 +63,48 @@ export function TrackListRow({
   );
 }
 
-export function TrackListHeader() {
+type TrackListHeaderProps = {
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+};
+
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: "title", label: "Title" },
+  { key: "artist", label: "Artist" },
+  { key: "language", label: "Language" },
+];
+
+function ariaSortValue(
+  key: SortKey,
+  sortKey: SortKey,
+  sortDir: SortDir,
+): "ascending" | "descending" | "none" {
+  if (key !== sortKey) return "none";
+  return sortDir === "asc" ? "ascending" : "descending";
+}
+
+export function TrackListHeader({ sortKey, sortDir, onSort }: TrackListHeaderProps) {
   return (
-    <div className="track-list-header" aria-hidden="true">
-      <span className="track-list-header-cell">Title</span>
-      <span className="track-list-header-cell">Artist</span>
-      <span className="track-list-header-cell">Language</span>
+    <div className="track-list-header" role="row">
+      {COLUMNS.map(({ key, label }) => {
+        const isActive = sortKey === key;
+        const SortIcon = sortDir === "asc" ? ChevronUp : ChevronDown;
+
+        return (
+          <button
+            key={key}
+            type="button"
+            role="columnheader"
+            className={`track-list-header-cell track-list-sort-btn${isActive ? " is-active" : ""}`}
+            aria-sort={ariaSortValue(key, sortKey, sortDir)}
+            onClick={() => onSort(key)}
+          >
+            <span>{label}</span>
+            {isActive && <SortIcon size={12} aria-hidden className="track-list-sort-icon" />}
+          </button>
+        );
+      })}
     </div>
   );
 }

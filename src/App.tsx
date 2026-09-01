@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { EditTrackPicker } from "./components/EditTrackPicker";
+import { EditView } from "./components/EditView";
 import { HomeView } from "./components/HomeView";
 import { NowPlayingBar } from "./components/NowPlayingBar";
 import { Settings } from "./components/Settings";
 import { Sidebar, type AppTab } from "./components/Sidebar";
-import { TrackItem } from "./components/TrackItem";
 import type { TrackSearchState } from "./components/LyricsEditor";
 import { errorMessage } from "./lib/format";
 import { applyTheme, getStoredTheme, setStoredTheme, type Theme } from "./lib/theme";
@@ -647,52 +646,28 @@ function App() {
       );
     }
 
-    const selectedTrack =
-      selectedEditTrackId != null
-        ? tracks.find((t) => t.id === selectedEditTrackId)
-        : undefined;
-
     return (
-      <div className="edit-split">
-        <div className="edit-split-picker track-list-pane">
-          <h3 className="edit-split-heading">Tracks</h3>
-          <EditTrackPicker
-            tracks={tracks}
-            selectedId={selectedEditTrackId}
-            processingIds={processingIds}
-            searchingIds={searchingIds}
-            onSelect={(trackId) => void onSelectEditTrack(trackId)}
-          />
-        </div>
-        <div className="edit-split-editor">
-          {selectedTrack ? (
-            <TrackItem
-              track={selectedTrack}
-              lyrics={lyricsByTrack[selectedTrack.id]}
-              isProcessing={processingIds.has(selectedTrack.id)}
-              searchState={searchByTrack[selectedTrack.id]}
-              onRequestSearch={(query) =>
-                void onRequestSearch(selectedTrack.id, query)
-              }
-              onProcessLyrics={(pasted, lrclibId) =>
-                void onProcessLyrics(selectedTrack.id, pasted, lrclibId)
-              }
-              onSetLanguage={(languageCode, lrclibId) =>
-                void onSetLanguage(selectedTrack.id, languageCode, lrclibId)
-              }
-              onPreviewLanguage={(lrclibId) =>
-                void onPreviewLanguage(selectedTrack.id, lrclibId)
-              }
-              isDetectingLanguage={detectingLanguageIds.has(selectedTrack.id)}
-              languagePreviewWarning={
-                languagePreviewWarningByTrack[selectedTrack.id] ?? null
-              }
-            />
-          ) : (
-            <p className="muted edit-empty">Select a track to edit its lyrics</p>
-          )}
-        </div>
-      </div>
+      <EditView
+        tracks={tracks}
+        selectedEditTrackId={selectedEditTrackId}
+        processingIds={processingIds}
+        searchingIds={searchingIds}
+        lyricsByTrack={lyricsByTrack}
+        searchByTrack={searchByTrack}
+        detectingLanguageIds={detectingLanguageIds}
+        languagePreviewWarningByTrack={languagePreviewWarningByTrack}
+        onSelectEditTrack={(trackId) => void onSelectEditTrack(trackId)}
+        onRequestSearch={(trackId, query) => void onRequestSearch(trackId, query)}
+        onProcessLyrics={(trackId, pasted, lrclibId) =>
+          void onProcessLyrics(trackId, pasted, lrclibId)
+        }
+        onSetLanguage={(trackId, languageCode, lrclibId) =>
+          void onSetLanguage(trackId, languageCode, lrclibId)
+        }
+        onPreviewLanguage={(trackId, lrclibId) =>
+          void onPreviewLanguage(trackId, lrclibId)
+        }
+      />
     );
   }
 
