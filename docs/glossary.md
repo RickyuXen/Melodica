@@ -14,11 +14,23 @@ Optional start time of a lyric line in milliseconds from the beginning of the tr
 
 ## Seek-to-line
 
-User action (click or keyboard activate on a timed line button) that seeks playback to that line’s `timestampMs`, using the same path as the scrubber (`onSeekCommit` → play if needed → `playbackSeek`).
+User action (click or keyboard activate on a timed line button) that seeks playback to that line’s `timestampMs`, using the same path as the scrubber (play if needed → `playbackSeek`).
+
+## Sidebar navigation
+
+Vertical left nav (20% width) with Melodica branding, Home / Upload / Edit / Settings tabs (lucide icons), and Rust core connection status in the footer. Replaces the former horizontal header navbar.
+
+## Now playing bar
+
+Persistent player footer in the main column (80% width), visible on every tab. Holds previous / play-pause / next, seek slider, volume, and clickable track info. Clicking the track title navigates to Home and opens that song’s lyrics in the right pane.
+
+## Home split view
+
+Home tab layout: compact library list (left, 25%) and lyrics pane (right, 75%). Selecting a library row auto-plays the track and shows `LyricsDisplay` with karaoke highlight, seek-to-line, and the dual study translation layout.
 
 ## View lyrics
 
-Home Library control that expands a track’s lyric panel (`LyricsDisplay`). This is the only surface with karaoke highlight, seek-to-line, and the dual study translation layout.
+Home surface for reading synced lyrics: select a track in the library list (left pane) or click the now playing bar track info. Renders `LyricsDisplay` in the right pane — the only surface with karaoke highlight, seek-to-line, and the dual study translation layout.
 
 ## Line sense
 
