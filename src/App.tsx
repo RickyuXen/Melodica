@@ -35,6 +35,8 @@ import {
   searchLyrics,
   setTrackLanguage,
   setVolume,
+  playbackPlayNext,
+  playbackPlayPrevious,
   type AppInfo,
   type LyricLine,
   type PlaybackStatus,
@@ -568,6 +570,24 @@ function App() {
     }
   }
 
+  async function onPlayNext() {
+    setPlaybackError(null);
+    try {
+      applyPlayback(await playbackPlayNext());
+    } catch (err: unknown) {
+      setPlaybackError(errorMessage(err, "Could not play next track"));
+    }
+  }
+
+  async function onPlayPrevious() {
+    setPlaybackError(null);
+    try {
+      applyPlayback(await playbackPlayPrevious());
+    } catch (err: unknown) {
+      setPlaybackError(errorMessage(err, "Could not play previous track"));
+    }
+  }
+
   const processingCount = processingIds.size;
   const searchingIds = new Set(
     Object.entries(searchByTrack)
@@ -719,6 +739,20 @@ function App() {
               onChange={onVolumeChange}
               disabled={!connected}
             />
+            <button
+              type="button"
+              disabled={!connected || tracks.length === 0}
+              onClick={() => void onPlayPrevious()}
+            >
+              Play Previous
+            </button>
+            <button
+              type="button"
+              disabled={!connected || tracks.length === 0}
+              onClick={() => void onPlayNext()}
+            >
+              Play Next
+            </button>
           </div>
           {renderTrackList()}
         </section>

@@ -179,6 +179,44 @@ fn playback_play(
 }
 
 #[tauri::command]
+fn playback_play_next(
+    app: AppHandle,
+    engine: State<'_, SharedPlayback>,
+) -> Result<PlaybackStatus, String> {
+    let conn = storage::open(&app)?;
+    let current_id = {
+        let guard = engine
+            .lock()
+            .map_err(|_| "playback state poisoned".to_string())?;
+        guard.as_ref().and_then(|p| p.status().track_id)
+    };
+    let track = storage::next_track_in_library(&conn, current_id)?
+        .ok_or_else(|| "no tracks in library".to_string())?;
+    playback::with_engine(&engine, |player| {
+        player.play_file(track.id, &track.file_path, track.duration_ms)
+    })
+}
+
+#[tauri::command]
+fn playback_play_previous(
+    app: AppHandle,
+    engine: State<'_, SharedPlayback>,
+) -> Result<PlaybackStatus, String> {
+    let conn = storage::open(&app)?;
+    let current_id = {
+        let guard = engine
+            .lock()
+            .map_err(|_| "playback state poisoned".to_string())?;
+        guard.as_ref().and_then(|p| p.status().track_id)
+    };
+    let track = storage::previous_track_in_library(&conn, current_id)?
+        .ok_or_else(|| "no tracks in library".to_string())?;
+    playback::with_engine(&engine, |player| {
+        player.play_file(track.id, &track.file_path, track.duration_ms)
+    })
+}
+
+#[tauri::command]
 fn playback_toggle(engine: State<'_, SharedPlayback>) -> Result<PlaybackStatus, String> {
     playback::with_engine(&engine, |player| Ok(player.toggle()))
 }
@@ -235,6 +273,8 @@ pub fn run() {
             get_translate_api_key_status,
             set_translate_api_key,
             playback_play,
+            playback_play_next,
+            playback_play_previous,
             playback_toggle,
             playback_seek,
             playback_status,

@@ -308,6 +308,14 @@ export async function playbackStatus(): Promise<PlaybackStatus> {
   return invoke<PlaybackStatus>("playback_status");
 }
 
+export async function playbackPlayNext(): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_play_next");
+}
+
+export async function playbackPlayPrevious(): Promise<PlaybackStatus> {
+  return invoke<PlaybackStatus>("playback_play_previous");
+}
+
 /** Sets playback volume in the range `[0, 1]`. */
 export async function setVolume(volume: number): Promise<void> {
   return invoke<void>("set_volume", { volume });
