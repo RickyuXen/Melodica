@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { primaryLanguageTag } from "../lib/format";
-import type { LyricLine, WordGloss } from "../lib/tauri";
+import type { LyricLine, LyricsState, WordGloss } from "../lib/tauri";
 import { activeLyricLineIndex, lyricsAreSynced } from "../lib/lyricsSync";
-
-type LyricsState = LyricLine[] | "loading" | "error" | undefined;
 
 const AUTO_SCROLL_RESUME_MS = 3000;
 const DEFAULT_TARGET = "en";

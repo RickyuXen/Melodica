@@ -1,3 +1,5 @@
+import { Volume2 } from "lucide-react";
+
 type VolumeSliderProps = {
   value: number;
   onChange: (volume: number) => void;
@@ -11,7 +13,7 @@ export function VolumeSlider({
 }: VolumeSliderProps) {
   return (
     <label className="volume-control">
-      <span className="volume-label">Volume</span>
+      <Volume2 className="volume-icon" />
       <input
         type="range"
         className="volume-slider"

@@ -106,9 +106,10 @@ class GeminiFlashProvider:
 
 
 def resolve_api_key(request_key: Optional[str]) -> Optional[str]:
-    """Prefer the key passed from Rust (Settings > env already resolved)."""
+    """Prefer the key passed from Rust (Settings, or .env in debug builds)."""
     if request_key and request_key.strip():
         return request_key.strip()
+    # Fallback for standalone `sidecar:dev` without Rust credentials.
     env = os.environ.get("MELODICA_TRANSLATE_API_KEY", "").strip()
     return env or None
 

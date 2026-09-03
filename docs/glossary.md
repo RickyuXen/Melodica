@@ -14,11 +14,35 @@ Optional start time of a lyric line in milliseconds from the beginning of the tr
 
 ## Seek-to-line
 
-User action (click or keyboard activate on a timed line button) that seeks playback to that line’s `timestampMs`, using the same path as the scrubber (`onSeekCommit` → play if needed → `playbackSeek`).
+User action (click or keyboard activate on a timed line button) that seeks playback to that line’s `timestampMs`, using the same path as the scrubber (play if needed → `playbackSeek`).
+
+## Sidebar navigation
+
+Vertical left nav (20% width) with Melodica branding, Home / Upload / Edit / Settings tabs (lucide icons), and Rust core connection status in the footer. Replaces the former horizontal header navbar.
+
+## Now playing bar
+
+Persistent player footer in the main column (80% width), visible on every tab. Holds previous / play-pause / next, seek slider, volume, and clickable track info. Clicking the track title navigates to Home and opens that song’s lyrics in the right pane.
+
+## Home split view
+
+Home tab layout: library list (left, 25% in split mode) and lyrics pane (right, 75%). Selecting a library row auto-plays the track and shows `LyricsDisplay` with karaoke highlight, seek-to-line, and the dual study translation layout. The library supports search, column sort (default title A→Z), and pane expand/contract controls.
+
+## Library pane mode
+
+Session-scoped layout for the Home or Edit split: `split` (default 25/75), `list-only` (full song list), or `lyrics-only` (lyrics/editor only). Controlled by toolbar buttons in the track list pane; resets on app launch.
+
+## Track list sort
+
+Frontend-only ordering of library rows by title, artist, or language. Default is title ascending. Clicking a column header sorts by that field; clicking the active column toggles ascending/descending. Does not affect playback next/prev order (still `added_at DESC` in the backend).
+
+## Track list search
+
+Filter above the library grid. Case-insensitive match against track title, artist, and human-readable language name. Empty results show “No matching songs.”
 
 ## View lyrics
 
-Home Library control that expands a track’s lyric panel (`LyricsDisplay`). This is the only surface with karaoke highlight, seek-to-line, and the dual study translation layout.
+Home surface for reading synced lyrics: select a track in the library list (left pane) or click the now playing bar track info. Renders `LyricsDisplay` in the right pane — the only surface with karaoke highlight, seek-to-line, and the dual study translation layout.
 
 ## Line sense
 
@@ -59,3 +83,19 @@ On Edit, when the user selects an LRCLIB matching song (including the duration-m
 ## Process (lyrics pipeline)
 
 Edit action that commits lyrics then translation: resolve source (paste > LRCLIB id > embedded tags > Whisper) → save originals to `lyrics_cache` → re-detect language when not manual → `translate-align` for non-English (soft-fail). Song language changes alone never Process. Upload uses **upload auto-pipeline** instead of requiring this button.
+
+## Pipeline core
+
+Deep Rust module (`src-tauri/src/pipeline/core.rs`) shared by upload auto-pipeline and Process: **persist lyrics → resolve language → translate**. Callers pass a language policy (`RespectManual` vs `ForceAutoDetect`) and choose `translate_one` (Edit) or `translate_batch` (upload). Source acquisition and event emission stay in the upload / Process adapters. Import’s early embedded write (`begin_upload`) stays outside this core.
+
+## Library session
+
+UI session hook (`useLibrarySession`): tracks list, lyrics cache, Home `openTrackId`, Edit `selectedEditTrackId`, refresh/upsert/load. Track-list search/sort/pane mode stays in Home/Edit (`useTrackListControls`), not here.
+
+## Pipeline session
+
+UI session hook (`usePipelineSession`): processing/phase/search/detecting state, `pipelineError`, upload/Process/search/language/preview commands, and Tauri pipeline/search/preview event subscriptions. Writes into the Library session on finish (upsert track, fill lyrics).
+
+## Playback session
+
+UI session hook (`usePlaybackSession`): playback status, scrub, volume, play/seek/next/prev. May patch `tracks.durationMs` on the Library session when the engine reports a duration (cross-session write used for duration match / UI).

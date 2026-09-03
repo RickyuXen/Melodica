@@ -1,4 +1,4 @@
-//! SQLite library storage — schema from plan.md.
+//! SQLite library storage — schema from docs/plan.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -274,16 +274,6 @@ pub fn clear_language_code(conn: &Connection, track_id: i64) -> Result<(), Strin
     Ok(())
 }
 
-/// Drop sense/gloss columns so a language change does not leave stale help text.
-pub fn clear_line_translations(conn: &Connection, track_id: i64) -> Result<(), String> {
-    conn.execute(
-        "UPDATE lyrics_cache SET translated_text = NULL, word_glosses = NULL WHERE track_id = ?1",
-        params![track_id],
-    )
-    .map_err(|e| format!("clear lyric translations: {e}"))?;
-    Ok(())
-}
-
 const TRANSLATE_API_KEY: &str = "translate_api_key";
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -365,6 +355,97 @@ pub fn list_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
         tracks.push(row.map_err(|e| format!("map track: {e}"))?);
     }
     Ok(tracks)
+}
+
+fn first_track_in_library(conn: &Connection) -> Result<Option<Track>, String> {
+    conn.query_row(
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
+         FROM tracks
+         ORDER BY added_at DESC, id DESC
+         LIMIT 1",
+        [],
+        map_track,
+    )
+    .optional()
+    .map_err(|e| format!("query first track: {e}"))
+}
+
+/// Next track in library order (`added_at DESC, id DESC`). Wraps to the first track at the end.
+pub fn next_track_in_library(conn: &Connection, after_id: Option<i64>) -> Result<Option<Track>, String> {
+    match after_id {
+        None => first_track_in_library(conn),
+        Some(id) => {
+            let current = get_track_by_id(conn, id)?
+                .ok_or_else(|| format!("track not found: {id}"))?;
+
+            let next = conn
+                .query_row(
+                    "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                            language_manual, added_at
+                     FROM tracks
+                     WHERE added_at < ?1 OR (added_at = ?1 AND id < ?2)
+                     ORDER BY added_at DESC, id DESC
+                     LIMIT 1",
+                    params![current.added_at, current.id],
+                    map_track,
+                )
+                .optional()
+                .map_err(|e| format!("query next track: {e}"))?;
+
+            match next {
+                Some(track) => Ok(Some(track)),
+                None => first_track_in_library(conn),
+            }
+        }
+    }
+}
+
+fn last_track_in_library(conn: &Connection) -> Result<Option<Track>, String> {
+    conn.query_row(
+        "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                language_manual, added_at
+         FROM tracks
+         ORDER BY added_at ASC, id ASC
+         LIMIT 1",
+        [],
+        map_track,
+    )
+    .optional()
+    .map_err(|e| format!("query last track: {e}"))
+}
+
+/// Previous track in library order (`added_at DESC, id DESC`). Wraps to the last track at the start.
+pub fn previous_track_in_library(
+    conn: &Connection,
+    before_id: Option<i64>,
+) -> Result<Option<Track>, String> {
+    match before_id {
+        None => last_track_in_library(conn),
+        Some(id) => {
+            let current = get_track_by_id(conn, id)?
+                .ok_or_else(|| format!("track not found: {id}"))?;
+
+            let previous = conn
+                .query_row(
+                    "SELECT id, file_path, title, artist, album, duration_ms, language_code,
+                            language_manual, added_at
+                     FROM tracks
+                     WHERE added_at > ?1 OR (added_at = ?1 AND id > ?2)
+                     ORDER BY added_at ASC, id ASC
+                     LIMIT 1",
+                    params![current.added_at, current.id],
+                    map_track,
+                )
+                .optional()
+                .map_err(|e| format!("query previous track: {e}"))?;
+
+            match previous {
+                Some(track) => Ok(Some(track)),
+                None => last_track_in_library(conn),
+            }
+        }
+    }
 }
 
 pub fn get_lyrics(conn: &Connection, track_id: i64) -> Result<Vec<LyricLine>, String> {

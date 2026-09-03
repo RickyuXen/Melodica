@@ -4,7 +4,9 @@ Downloadable desktop music player that helps you learn a language through music 
 
 DISCLAIMER: This will simply help with vocabulary, structure and complete meanings. Learning a language is difficult and many subtlties could and would be lost in translations. This program was designed to enjoy music while also properly learning a language.
 
-Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes: [`plan.md`](./plan.md). Pipeline flowchart: [`flow.md`](./flow.md).
+This project was created with the help of AI tools.
+
+Product intent and constraints: [`docs/PRODUCT.md`](./docs/PRODUCT.md). Architecture notes: [`docs/plan.md`](./docs/plan.md). Pipeline flowchart: [`docs/flow.md`](./docs/flow.md).
 
 ## Layout
 
@@ -13,7 +15,7 @@ Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes
 | `src/` | React + TypeScript UI (Tauri webview) |
 | `src-tauri/` | Rust core — playback, tags, SQLite, LRCLIB, IPC |
 | `sidecar/` | Python FastAPI language service (Whisper ASR, translate-align) |
-| `docs/` | Glossary and ADRs |
+| `docs/` | Product docs, glossary, and ADRs |
 
 ## Prerequisites
 
@@ -35,18 +37,17 @@ Process translates non-English lyrics through Google’s **Gemini Flash** API (`
 
 ### Configure the key
 
-**Option A — Settings (recommended):** In Melodica, open **Settings → Translation API key**, paste the Gemini key, and click **Save key**. A Settings key **overrides** the environment variable.
+**Downloaded / release builds:** Open **Settings → Translation API key**, paste the Gemini key, and click **Save key**. Translation will not run without this.
 
-**Option B — Environment variable** (used when no Settings key is stored):
+**Development (`npm run tauri:dev`):** Either use Settings, or put the key in a project `.env` (see `.env.example`). The app loads `.env` automatically in debug builds. A Settings key overrides `.env`.
 
 ```bash
-export MELODICA_TRANSLATE_API_KEY="AIza..."
+# .env (dev only — never shipped with the app)
+MELODICA_TRANSLATE_API_KEY="AIza..."
 # optional overrides:
-export MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
-export MELODICA_TRANSLATE_MODEL="gemini-3.1-flash-lite"
+MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+MELODICA_TRANSLATE_MODEL="gemini-3.1-flash-lite"
 ```
-
-Start `tauri:dev` / the sidecar in shells that inherit these variables if you rely on Option B.
 
 ## Run the desktop app
 
@@ -55,35 +56,29 @@ npm install
 npm run tauri:dev
 ```
 
-For transcription and translation, also start the sidecar in another terminal:
+`npm run tauri:dev` starts the language sidecar automatically. For a live-reloading Python process instead:
 
 ```bash
 npm run sidecar:install
 npm run sidecar:dev
 ```
 
-First sidecar start downloads the Whisper `base` model. **Upload** auto-runs lyrics + translation for each chosen file (LRCLIB within ±1s of duration, else tags, else `POST /transcribe`), then batches same-language tracks into `POST /translate-align`. On **Edit**, selecting an LRCLIB match runs select-time `POST /detect-language` (no lyrics persist). After Process saves originals, it re-detects when language is not manual, then calls `POST /translate-align` for that track when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation still needs the sidecar.
+First transcription downloads the Whisper `base` model. **Upload** auto-runs lyrics + translation for each chosen file (LRCLIB within ±1s of duration, else tags, else `POST /transcribe`), then batches same-language tracks into `POST /translate-align`. On **Edit**, selecting an LRCLIB match runs select-time `POST /detect-language` (no lyrics persist). After Process saves originals, it re-detects when language is not manual, then calls `POST /translate-align` for that track when the song is not already English (requires API key + network). LRCLIB lookup and pasted lyrics run from the Rust core; translation and ASR use the sidecar.
 
-Build installers with:
+Build a standalone desktop app (UI + Rust core + frozen Python sidecar) with:
 
 ```bash
-npm run tauri:build
+npm run dist
 ```
 
-Artifacts land under `src-tauri/target/release/bundle/` (e.g. Windows NSIS/MSI). End users should install or unzip and launch Melodica — they never need Node, Rust, or `npm`.
+That command rebuilds the sidecar when its sources change, then packages Melodica. Artifacts land under `release/` (replaced in place on each run) and `src-tauri/target/release/bundle/`.
 
-## Distribution (end-user packaging)
+- **macOS:** `release/Melodica.app` — double-click to run. The language sidecar starts and stops with the app.
+- **Windows:** `release/Melodica.exe` plus the sidecar next to it (or the NSIS installer under `bundle/nsis/`). Produce `.exe` by running `npm run dist` on Windows.
 
-Today `tauri:build` packages the React UI into the Tauri binary and ships the Rust core (playback, SQLite, LRCLIB, IPC). The Python sidecar is still a separate process for developers.
+End users never need Node, Rust, or Python. The Whisper `base` model still downloads into app cache on first transcription.
 
-Target for shipped builds (also in [`PRODUCT.md`](./PRODUCT.md)):
-
-1. Freeze the FastAPI sidecar into a platform binary (e.g. PyInstaller / Nuitka) so no system Python is required.
-2. Register it in `tauri.conf.json` as `bundle.externalBin` and place named binaries under `src-tauri/binaries/`.
-3. On app start, Rust spawns the sidecar (localhost `8765`); on quit, it kills the process. Existing `sidecar.rs` HTTP calls then work without a second terminal.
-4. Prefer one download → install or portable folder → double-click over a literally single `.exe` that embeds Whisper weights. The model may still download into app data on first ASR use.
-
-Do not ship a launcher that runs `npm` or assumes Python on the user’s machine.
+For day-to-day development, `npm run tauri:dev` still works. You can keep using `npm run sidecar:dev` if you prefer a live-reloading Python process; otherwise the app starts a bundled/dev sidecar on port 8765.
 
 ## Sidecar
 
@@ -107,12 +102,12 @@ Bound to `127.0.0.1:8765`.
 - Home “View lyrics”: karaoke sync/seek and dual study layout
 - Settings: theme, translation language preference, translation API key, database reset
 - Light / dark theme and Melodica branding
+- Standalone desktop build (`npm run dist`) that packages the UI, Rust core, and language sidecar
 
-### Planned (source of truth: [`PRODUCT.md`](./PRODUCT.md))
+### Planned (source of truth: [`docs/PRODUCT.md`](./docs/PRODUCT.md))
 
 - Additional translation target languages beyond English
 - Offline / local LLM behind the same provider interface
 - Volume control, playlists, liked tracks
-- Bundle the sidecar as a Tauri `externalBin` (see [Distribution](#distribution-end-user-packaging)) so end users never install Python
 - Stronger audio/lyrics pipeline (confidence scoring, smarter LRCLIB pick on upload, multi-song translate batching, phonetics)
 - Accessibility standard TBD

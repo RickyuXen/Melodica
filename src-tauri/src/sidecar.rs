@@ -1,7 +1,7 @@
 //! HTTP client for the local Python FastAPI sidecar (localhost only).
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use ureq::Agent;
 
 use crate::storage::{LineTranslation, WordGloss};
@@ -144,7 +144,7 @@ pub fn transcribe(
         .post(&format!("{BASE_URL}/transcribe"))
         .send_json(&request)
         .map_err(|e| {
-            format!("Transcription failed (is `npm run sidecar:dev` running?): {e}")
+            format!("Transcription failed (language sidecar not ready): {e}")
         })?;
 
     let body: TranscribeResponse = response
@@ -188,7 +188,7 @@ pub fn detect_language(
         .post(&format!("{BASE_URL}/detect-language"))
         .send_json(&request)
         .map_err(|e| {
-            format!("Language detection failed (is `npm run sidecar:dev` running?): {e}")
+            format!("Language detection failed (language sidecar not ready): {e}")
         })?;
 
     let body: DetectLanguageResponse = response
@@ -247,7 +247,7 @@ pub fn translate_align_documents(
         .post(&format!("{BASE_URL}/translate-align"))
         .send_json(&request)
         .map_err(|e| {
-            format!("Translation failed (is `npm run sidecar:dev` running?): {e}")
+            format!("Translation failed (language sidecar not ready): {e}")
         })?;
 
     let status = response.status();
@@ -317,4 +317,70 @@ pub fn translate_align(
         .find(|d| d.id == document_id)
         .map(|d| d.lines)
         .ok_or_else(|| "translate-align returned no matching document".to_string())
+}
+
+use std::sync::Mutex;
+use std::thread;
+
+use tauri::{AppHandle, Manager};
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::ShellExt;
+
+const HEALTH_URL: &str = "http://127.0.0.1:8765/health";
+
+pub struct SidecarHandle(pub Mutex<Option<CommandChild>>);
+
+fn health_ok() -> bool {
+    agent().get(HEALTH_URL).call().is_ok()
+}
+
+/// Spawn the bundled language sidecar if nothing is already listening on 8765.
+pub fn start(app: &AppHandle) -> Result<(), String> {
+    if health_ok() {
+        return Ok(());
+    }
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("whisper");
+    let _ = std::fs::create_dir_all(&cache_dir);
+
+    let cache = cache_dir.to_string_lossy().into_owned();
+    let command = app
+        .shell()
+        .sidecar("melodica-sidecar")
+        .map_err(|e| format!("Sidecar binary missing: {e}"))?
+        .env("MELODICA_MODEL_CACHE", cache);
+
+    let (mut rx, child) = command
+        .spawn()
+        .map_err(|e| format!("Failed to start language sidecar: {e}"))?;
+
+    tauri::async_runtime::spawn(async move {
+        while rx.recv().await.is_some() {}
+    });
+
+    if let Ok(mut slot) = app.state::<SidecarHandle>().0.lock() {
+        *slot = Some(child);
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline {
+        if health_ok() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    Err("Language sidecar did not become ready".to_string())
+}
+
+pub fn stop(app: &AppHandle) {
+    if let Ok(mut slot) = app.state::<SidecarHandle>().0.lock() {
+        if let Some(child) = slot.take() {
+            let _ = child.kill();
+        }
+    }
 }

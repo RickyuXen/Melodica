@@ -1,21 +1,26 @@
 {
   "name": "melodica",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "python3 scripts/bundle_sidecar.py --dev && tauri dev",
     "tauri:build": "tauri build",
+    "dist": "python3 scripts/run_dist.py",
+    "sidecar:bundle": "python3 scripts/bundle_sidecar.py",
+    "sidecar:bundle:force": "python3 scripts/bundle_sidecar.py --force",
     "sidecar:install": "python3 -m pip install -r sidecar/requirements.txt",
     "sidecar:dev": "python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload --app-dir sidecar"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "lucide-react": "^1.38.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { Theme } from "../lib/theme";
 import {
   TRANSLATION_LANGUAGES,
@@ -6,8 +7,11 @@ import {
 } from "../lib/translationLanguage";
 import {
   getTranslateApiKeyStatus,
+  openExternalUrl,
   setTranslateApiKey,
 } from "../lib/tauri";
+
+const GEMINI_API_KEY_URL = "https://aistudio.google.com/apikey";
 
 type SettingsProps = {
   theme: Theme;
@@ -33,6 +37,7 @@ export function Settings({
 
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
@@ -41,7 +46,9 @@ export function Settings({
     let cancelled = false;
     void getTranslateApiKeyStatus()
       .then((status) => {
-        if (!cancelled) setHasApiKey(status.hasKey);
+        if (cancelled) return;
+        setHasApiKey(status.hasKey);
+        setApiKeyDraft(status.apiKey ?? "");
       })
       .catch(() => {
         if (!cancelled) setHasApiKey(false);
@@ -79,11 +86,11 @@ export function Settings({
     try {
       const status = await setTranslateApiKey(apiKeyDraft);
       setHasApiKey(status.hasKey);
-      setApiKeyDraft("");
+      setApiKeyDraft(status.apiKey ?? "");
       setApiKeyMessage(
         status.hasKey
-          ? "API key saved. It overrides MELODICA_TRANSLATE_API_KEY."
-          : "API key cleared. Melodica will use the environment variable if set.",
+          ? "API key saved. It persists in Melodica’s local settings across restarts."
+          : "API key cleared. Add a key here to translate lyrics.",
       );
     } catch (err: unknown) {
       setApiKeyError(
@@ -102,8 +109,9 @@ export function Settings({
       const status = await setTranslateApiKey(null);
       setHasApiKey(status.hasKey);
       setApiKeyDraft("");
+      setApiKeyVisible(false);
       setApiKeyMessage(
-        "API key cleared. Melodica will use the environment variable if set.",
+        "API key cleared. Add a key here to translate lyrics.",
       );
     } catch (err: unknown) {
       setApiKeyError(
@@ -181,13 +189,36 @@ export function Settings({
             Translation API key
           </span>
           <span className="settings-row-desc muted">
-            Google Gemini API key for lyric translation (Flash by default). A
-            key saved here overrides <code>MELODICA_TRANSLATE_API_KEY</code> in
-            the environment. See the README for how to create a key.
+            Google Gemini API key for lyric translation (Flash by default).
+            Required for Process translation on a downloaded app. Saved keys are
+            stored on this computer and kept after a database reset.
           </span>
+          <ol className="settings-api-key-steps muted">
+            <li>
+              Open{" "}
+              <a
+                className="settings-external-link"
+                href={GEMINI_API_KEY_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  void openExternalUrl(GEMINI_API_KEY_URL);
+                }}
+              >
+                Google AI Studio
+              </a>{" "}
+              and sign in with a Google account.
+            </li>
+            <li>
+              Click <strong>Create API key</strong> (create or pick a Google Cloud
+              project if prompted).
+            </li>
+            <li>Copy the key once, then paste it below and save.</li>
+          </ol>
           {hasApiKey && (
             <p className="muted settings-inline-msg">
-              A Settings key is stored (value is not shown).
+              A key is saved on this device.
             </p>
           )}
           {apiKeyError && (
@@ -199,18 +230,34 @@ export function Settings({
         </div>
 
         <div className="settings-api-key">
-          <input
-            id="translate-api-key-input"
-            className="field"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={hasApiKey ? "••••••••••••" : "AIza…"}
-            aria-labelledby="translate-api-key-label"
-            value={apiKeyDraft}
-            disabled={apiKeyBusy || !canResetDatabase}
-            onChange={(e) => setApiKeyDraft(e.target.value)}
-          />
+          <div className="settings-api-key-field">
+            <input
+              id="translate-api-key-input"
+              className="field"
+              type={apiKeyVisible ? "text" : "password"}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="AIza…"
+              aria-labelledby="translate-api-key-label"
+              value={apiKeyDraft}
+              disabled={apiKeyBusy || !canResetDatabase}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+            />
+            <button
+              type="button"
+              className="settings-api-key-reveal"
+              aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}
+              aria-pressed={apiKeyVisible}
+              disabled={apiKeyBusy || !canResetDatabase || !apiKeyDraft}
+              onClick={() => setApiKeyVisible((v) => !v)}
+            >
+              {apiKeyVisible ? (
+                <EyeOff aria-hidden="true" />
+              ) : (
+                <Eye aria-hidden="true" />
+              )}
+            </button>
+          </div>
           <div className="settings-api-key-actions">
             <button
               type="button"

@@ -113,7 +113,7 @@ UI  →  Rust command  →  Rust HTTP client  →  http://127.0.0.1:8765/...  �
 
 React never talks to Python. Rust does, then returns structured data (original lines, word glosses, sentence sense, timestamps, language code) for the UI to render.
 
-The sidecar exposes `/health`, `/transcribe`, `/detect-language`, and `/translate-align`. Developers run it with `npm run sidecar:dev`. Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves. Target packaging path: freeze the FastAPI service (e.g. PyInstaller) → register as Tauri `externalBin` → spawn/kill with the app lifecycle → ship via `tauri build` (installer or portable folder). End users should never need Node, Rust, or a manual `npm run sidecar:dev`. Details: [`PRODUCT.md`](./PRODUCT.md) (distribution intent) and [`README.md`](./README.md#distribution-end-user-packaging).
+The sidecar exposes `/health`, `/transcribe`, `/detect-language`, and `/translate-align`. Developers run it with `npm run sidecar:dev`. Later, Tauri can spawn the sidecar as a bundled binary so users never install Python themselves. Target packaging path: freeze the FastAPI service (e.g. PyInstaller) → register as Tauri `externalBin` → spawn/kill with the app lifecycle → ship via `tauri build` (installer or portable folder). End users should never need Node, Rust, or a manual `npm run sidecar:dev`. Details: [`PRODUCT.md`](./PRODUCT.md) (distribution intent) and [`../README.md`](../README.md#distribution-end-user-packaging).
 
 ---
 
@@ -135,7 +135,7 @@ Edit remains for paste, language override, and manual Process. Optional internet
 | `src/`       | React UI inside Tauri’s webview                    |
 | `src-tauri/` | Rust core + Tauri config + app binary              |
 | `sidecar/`   | Python FastAPI language service (separate process) |
-| `plan.md`    | Full architecture and build order                  |
+| `docs/plan.md` | Full architecture and build order                |
 
 ---
 
