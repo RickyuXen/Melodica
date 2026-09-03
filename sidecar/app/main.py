@@ -6,7 +6,7 @@ and multi-document lyric translation with word glosses.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -29,18 +29,21 @@ _CLIP_SECONDS = 30
 _SAMPLE_RATE = 16000
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
+def _get_model():
+    """Load Whisper on first ASR use so the sidecar can boot without waiting."""
     global _model
-    from faster_whisper import WhisperModel
+    if _model is None:
+        from faster_whisper import WhisperModel
 
-    # Small CPU-friendly model; downloaded once on first start.
-    _model = WhisperModel("base", device="cpu", compute_type="int8")
-    yield
-    _model = None
+        kwargs = {"device": "cpu", "compute_type": "int8"}
+        cache = os.environ.get("MELODICA_MODEL_CACHE")
+        if cache:
+            kwargs["download_root"] = cache
+        _model = WhisperModel("base", **kwargs)
+    return _model
 
 
-app = FastAPI(title="Melodica Sidecar", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Melodica Sidecar", version="0.1.0")
 
 
 class TranscribeRequest(BaseModel):
@@ -79,8 +82,7 @@ def health() -> dict[str, str]:
 
 @app.post("/transcribe")
 def transcribe(req: TranscribeRequest) -> TranscribeResponse:
-    if _model is None:
-        raise HTTPException(status_code=503, detail="Whisper model is not loaded")
+    model = _get_model()
 
     path = Path(req.file_path)
     if not path.is_file():
@@ -97,7 +99,7 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
         file_path=req.file_path,
     )
 
-    segments, info = _model.transcribe(
+    segments, info = model.transcribe(
         audio,
         language=language,
         beam_size=1,
@@ -159,7 +161,7 @@ def _resolve_whisper_language(
     if meta:
         return meta
 
-    language, _prob, _ranked = _model.detect_language(
+    language, _prob, _ranked = _get_model().detect_language(
         audio=audio,
         vad_filter=True,
         language_detection_segments=5,
@@ -177,7 +179,7 @@ def _zh_fits_better_than_ko(audio) -> bool:
 
 
 def _mean_logprob(audio, language: str) -> float:
-    segments, _info = _model.transcribe(
+    segments, _info = _get_model().transcribe(
         audio,
         language=language,
         beam_size=1,

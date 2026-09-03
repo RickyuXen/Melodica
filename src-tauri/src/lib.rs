@@ -7,7 +7,7 @@ mod storage;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, RunEvent, State};
 
 use playback::{PlaybackStatus, SharedPlayback};
 use storage::{LyricLine, Track};
@@ -256,9 +256,17 @@ fn set_volume(engine: State<'_, SharedPlayback>, volume: f32) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(Mutex::new(None) as SharedPlayback)
+        .manage(sidecar::SidecarHandle(Mutex::new(None)))
+        .setup(|app| {
+            if let Err(err) = sidecar::start(app.handle()) {
+                eprintln!("[melodica] {err}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             process_upload,
@@ -280,6 +288,12 @@ pub fn run() {
             playback_status,
             set_volume
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::Exit = event {
+            sidecar::stop(app_handle);
+        }
+    });
 }

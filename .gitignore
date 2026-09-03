@@ -27,6 +27,12 @@ todo.md
 
 # Rust / Tauri
 src-tauri/target
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+
+# Frozen sidecar (PyInstaller)
+sidecar/build/
+sidecar/dist/
 
 # Python sidecar
 sidecar/.venv
@@ -39,3 +45,6 @@ __pycache__/
 # Env
 .env
 .env.*
+
+# Standalone app output (replaced on each `npm run dist`)
+release/
