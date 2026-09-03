@@ -2,15 +2,13 @@ import type { LyricLine, Track } from "../lib/tauri";
 import { paneModeClass } from "../lib/trackList";
 import { useTrackListControls } from "../hooks/useTrackListControls";
 import { LyricsDisplay } from "./LyricsDisplay";
-import { LibraryTrackList } from "./LibraryTrackList";
-
-type LyricsState = LyricLine[] | "loading" | "error" | undefined;
+import { TrackList } from "./TrackList";
 
 type HomeViewProps = {
   tracks: Track[];
   openTrackId: number | null;
   playingTrackId: number | null;
-  lyrics: LyricsState;
+  lyrics: LyricLine[] | "loading" | "error" | undefined;
   positionMs: number;
   isCurrent: boolean;
   processingIds: Set<number>;
@@ -49,10 +47,10 @@ export function HomeView({
     <div className={paneModeClass("home-split", paneMode)}>
       <div className="home-split-list track-list-pane">
         <h2 className="home-split-heading" style={{ marginBottom: "10px" }}>Library</h2>
-        <LibraryTrackList
+        <TrackList
           tracks={displayTracks}
           totalCount={tracks.length}
-          openTrackId={openTrackId}
+          selectedId={openTrackId}
           playingTrackId={playingTrackId}
           processingIds={processingIds}
           pipelinePhaseByTrack={pipelinePhaseByTrack}
@@ -60,6 +58,8 @@ export function HomeView({
           sortDir={sortDir}
           searchQuery={searchQuery}
           paneMode={paneMode}
+          ariaLabel="Library"
+          listClassName="library-track-list"
           onSearchChange={setSearchQuery}
           onPaneModeChange={setPaneMode}
           onSort={toggleSort}

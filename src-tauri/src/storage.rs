@@ -1,4 +1,4 @@
-//! SQLite library storage — schema from plan.md.
+//! SQLite library storage — schema from docs/plan.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -271,16 +271,6 @@ pub fn clear_language_code(conn: &Connection, track_id: i64) -> Result<(), Strin
     if updated == 0 {
         return Err(format!("track not found: {track_id}"));
     }
-    Ok(())
-}
-
-/// Drop sense/gloss columns so a language change does not leave stale help text.
-pub fn clear_line_translations(conn: &Connection, track_id: i64) -> Result<(), String> {
-    conn.execute(
-        "UPDATE lyrics_cache SET translated_text = NULL, word_glosses = NULL WHERE track_id = ?1",
-        params![track_id],
-    )
-    .map_err(|e| format!("clear lyric translations: {e}"))?;
     Ok(())
 }
 

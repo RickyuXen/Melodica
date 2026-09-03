@@ -20,7 +20,7 @@ The Home and Edit split panes showed a compact three-column track list (title, a
    - `lyrics-only`: lyrics/editor full width; song list hidden
    Toolbar icon buttons expand, contract, and restore split.
 
-4. **Shared implementation** — `trackList.ts` utilities, `useTrackListControls` hook, `TrackListToolbar`, and sortable `TrackListHeader` are shared by `LibraryTrackList` (Home) and `EditTrackPicker` (Edit).
+4. **Shared implementation** — `trackList.ts` utilities, `useTrackListControls` hook, `TrackListToolbar`, sortable `TrackListHeader`, and shared `TrackList` for Home and Edit.
 
 5. **App icons** — Tauri dock/taskbar icons regenerated from a square crop of the Melodica logo mark (`icon-master.png` → `tauri icon`).
 

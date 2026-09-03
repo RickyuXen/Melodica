@@ -81,7 +81,7 @@ Typical loop: pick one or more files → upload auto-pipeline finds lyrics and t
 
 ## Evidence on Hand
 
-- Architecture and intent: `plan.md`, `explanation.md`, `README.md`, `flow.md`.
+- Architecture and intent: `docs/plan.md`, `docs/explanation.md`, `README.md`, `docs/flow.md`.
 - Working prototype: multi-file upload auto-pipeline, playback, lyrics panel, language detection, karaoke line sync, sidecar ASR, batched translate-align with word glosses + line sense.
 - App icons under `src-tauri/icons/`.
 - No testimonials, customers, benchmarks, pricing, or press. Future work must not invent them. Demonstration tracks are the user’s own files, not a fake catalog.

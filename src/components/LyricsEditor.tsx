@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { LyricLine, LyricsMatch } from "../lib/tauri";
+import type { LyricsMatch, LyricsState } from "../lib/tauri";
 import { formatTime, languageLabel } from "../lib/format";
 import { SONG_LANGUAGES } from "../lib/songLanguage";
-
-type LyricsState = LyricLine[] | "loading" | "error" | undefined;
 
 export type TrackSearchState = {
   activeQuery: string;
@@ -115,23 +113,27 @@ export function LyricsEditor({
   }, [matches, resultsForQuery?.preferredMatchId]);
 
   // Select-time detect when the match changes (including duration-matched auto-select).
-  // Do not clear language on initial empty selection before search settles.
+  // Skip when a language is already set; backend prefers processed lyrics over LRCLIB text.
   useEffect(() => {
     if (searching) return;
+
+    if (languageCode?.trim()) {
+      prevSelectedRef.current = selectedId;
+      return;
+    }
 
     const prev = prevSelectedRef.current;
     if (prev === undefined) {
       prevSelectedRef.current = selectedId;
-      if (selectedId != null) {
-        onPreviewLanguage(selectedId);
-      }
+      // Always attempt once search settles — uses processed lyrics, else LRCLIB match.
+      onPreviewLanguage(selectedId);
       return;
     }
     if (prev === selectedId) return;
     prevSelectedRef.current = selectedId;
     onPreviewLanguage(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, searching, trackId]);
+  }, [selectedId, searching, trackId, languageCode]);
 
   function requestSearch(nextQuery: string) {
     if (debounceRef.current != null) {
@@ -152,8 +154,8 @@ export function LyricsEditor({
     <div className="lyrics-panel">
       <div className="lyrics-source">
         <p className="muted lyrics-hint">
-          Process saves lyrics, then translates using the language below. Selecting
-          a match detects language first; override does not Process.
+          Process saves lyrics, then translates using the language below. Language
+          auto-detects from processed lyrics when unset; override does not Process.
         </p>
         <div className="lyrics-language-row">
           <label className="field-label" htmlFor={`lyrics-lang-${trackId}`}>
@@ -189,7 +191,7 @@ export function LyricsEditor({
           </select>
           {isDetectingLanguage && (
             <p className="muted lyrics-hint" role="status" aria-live="polite">
-              Detecting language from selected match…
+              Detecting language from lyrics…
             </p>
           )}
           {!isDetectingLanguage && detectedLabel() && !languageManual && (

@@ -38,7 +38,7 @@ State wired from [`App.tsx`](../src/App.tsx) via existing Tauri playback command
 
 | Column | Content |
 |--------|---------|
-| Left (25%) | [`LibraryTrackList.tsx`](../src/components/LibraryTrackList.tsx) with search, sortable columns, pane controls |
+| Left (25%) | [`TrackList.tsx`](../src/components/TrackList.tsx) with search, sortable columns, pane controls |
 | Right (75%) | [`LyricsDisplay`](../src/components/LyricsDisplay.tsx) for `openTrackId` |
 
 **Library pane modes** (session-scoped, toolbar in left pane):
@@ -57,8 +57,8 @@ Default track order: title ascending. Search filters title, artist, and language
 
 | Column | Content |
 |--------|---------|
-| Left (25%) | [`EditTrackPicker`](../src/components/EditTrackPicker.tsx) via [`EditView.tsx`](../src/components/EditView.tsx) |
-| Right (75%) | [`LyricsEditor`](../src/components/LyricsEditor.tsx) via slim [`TrackItem`](../src/components/TrackItem.tsx) |
+| Left (25%) | [`TrackList`](../src/components/TrackList.tsx) via [`EditView.tsx`](../src/components/EditView.tsx) |
+| Right (75%) | [`LyricsEditor`](../src/components/LyricsEditor.tsx) |
 
 Edit panel uses a stronger border (`border-color: var(--color-action)`) to distinguish from Home.
 

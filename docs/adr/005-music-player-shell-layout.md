@@ -23,6 +23,6 @@ Icons via `lucide-react`. No backend changes.
 
 - Playback controls are global, not per-track rows.
 - `Header.tsx` removed; `AppTab` lives on `Sidebar`.
-- `TrackItem` is edit-only; library rows use `LibraryTrackList`.
+- Library and Edit song rows share `TrackList`; Edit detail uses `LyricsEditor`.
 - Lyrics list height unconstrained in Home split (fills available pane).
 - Mobile: optional icon-only sidebar collapse at 768px.

@@ -170,6 +170,26 @@ body {
   border-top: 1px solid var(--color-border);
 }
 
+.sidebar-status-dot {
+  display: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sidebar-status-dot--checking {
+  background: var(--color-text-muted);
+}
+
+.sidebar-status-dot--connected {
+  background: var(--color-brand);
+}
+
+.sidebar-status-dot--error {
+  background: var(--color-error);
+}
+
 .sidebar-status-text {
   margin: 0;
   font-size: 0.75rem;
@@ -221,8 +241,8 @@ body {
 }
 
 .btn-icon svg {
-  width: 0.7rem;
-  height: 0.7rem;
+  width: 1.15rem;
+  height: 1.15rem;
   flex-shrink: 0;
 }
 
@@ -682,8 +702,29 @@ body {
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 1;
   cursor: not-allowed;
+  color: var(--color-control-disabled);
+  background: var(--color-control-disabled-bg);
+  border-color: var(--color-control-disabled-border);
+}
+
+.btn-icon:disabled {
+  color: var(--color-control-disabled);
+  background: var(--color-control-disabled-bg);
+  border-color: var(--color-control-disabled-border);
+}
+
+.btn-icon-primary:disabled {
+  color: var(--color-control-disabled);
+  background: var(--color-control-disabled-bg);
+  border-color: var(--color-control-disabled-border);
+}
+
+.btn-primary:disabled {
+  color: var(--color-control-disabled);
+  background: var(--color-control-disabled-bg);
+  border-color: var(--color-control-disabled-border);
 }
 
 .btn-primary {
@@ -783,124 +824,8 @@ body {
   background: var(--color-accent-soft);
 }
 
-.edit-track-row .track-meta {
-  flex: 1;
-  min-width: 0;
-}
-
-.edit-detail {
-  margin-top: var(--space-4);
-}
-
-.edit-detail .track-list,
-.edit-detail .track-item {
-  border: none;
-  background: none;
-  padding: 0;
-  box-shadow: none;
-}
-
-.edit-detail .lyrics-panel {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
-}
-
 .edit-desc {
   margin-bottom: var(--space-3);
-}
-
-.track-item {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  padding: 0.7rem 0.8rem;
-  transition: border-color 180ms var(--ease-out);
-}
-
-.track-item.is-current {
-  border-color: var(--color-current-track-border);
-  background: linear-gradient(
-    180deg,
-    var(--color-accent-soft),
-    var(--color-current-track-gradient-end) 42%
-  );
-}
-
-.track-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.track-actions {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.track-meta {
-  min-width: 0;
-  line-height: 1.35;
-}
-
-.track-meta strong {
-  color: var(--color-text);
-  font-weight: 600;
-}
-
-.lang-tag,
-.processing-tag {
-  display: inline-block;
-  margin-left: 0.45rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  vertical-align: middle;
-}
-
-.lang-tag {
-  color: var(--color-tag-text);
-  border: 1px solid var(--color-border);
-  background: var(--color-tag);
-  border-radius: calc(var(--radius) - 0.1rem);
-  padding: 0.1rem 0.4rem;
-}
-
-.processing-tag {
-  color: var(--color-processing);
-  font-weight: 500;
-}
-
-.edit-track-bar {
-  flex-shrink: 0;
-  width: 3.25rem;
-  height: 0.22rem;
-  margin-left: auto;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--color-border);
-}
-
-.edit-track-bar::after {
-  content: "";
-  display: block;
-  width: 40%;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-processing);
-  animation: edit-track-load 1.1s var(--ease-out) infinite;
-}
-
-@keyframes edit-track-load {
-  0% {
-    transform: translateX(-120%);
-  }
-  100% {
-    transform: translateX(280%);
-  }
 }
 
 .volume-control {
@@ -908,13 +833,6 @@ body {
   align-items: center;
   gap: var(--space-2);
   min-width: 10rem;
-}
-
-.volume-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  white-space: nowrap;
 }
 
 .volume-slider {
@@ -926,19 +844,12 @@ body {
 
 .volume-slider:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 1;
+  accent-color: var(--color-control-disabled);
 }
 
-.play-toggle {
-  min-width: 4.25rem;
-}
-
-.seek-wrap {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+.volume-control:has(.volume-slider:disabled) .volume-icon {
+  color: var(--color-control-disabled);
 }
 
 .seek {
@@ -950,7 +861,8 @@ body {
 
 .seek:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 1;
+  accent-color: var(--color-control-disabled);
 }
 
 .seek-times {
@@ -1125,12 +1037,11 @@ button.lyrics-line:focus-visible {
   font-size: 0.72em;
   font-weight: 400;
   line-height: 1.2;
-  color: var(--color-text-muted, var(--color-text));
-  opacity: 0.78;
+  color: var(--color-text-gloss);
 }
 
 .lyrics-line.is-active .lyrics-word-gloss {
-  opacity: 0.9;
+  color: var(--color-text-muted);
 }
 
 .lyrics-study-sep {
@@ -1176,6 +1087,49 @@ button.lyrics-line:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.settings-api-key-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.settings-api-key-field .field {
+  width: 100%;
+  padding-right: 2.75rem;
+}
+
+.settings-api-key-reveal {
+  position: absolute;
+  right: 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.settings-api-key-reveal svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.settings-api-key-reveal:hover:not(:disabled) {
+  color: var(--color-brand);
+  background: var(--color-accent-soft);
+}
+
+.settings-api-key-reveal:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 640px) {
@@ -1247,6 +1201,27 @@ code {
 .settings-row-desc {
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.settings-api-key-steps {
+  margin: 0.45rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.settings-api-key-steps li + li {
+  margin-top: 0.2rem;
+}
+
+.settings-external-link {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.settings-external-link:hover {
+  color: var(--color-action);
 }
 
 .settings-inline-msg {
@@ -1361,6 +1336,29 @@ code {
   .sidebar-nav-label,
   .brand-name {
     display: none;
+  }
+
+  .sidebar-status {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: var(--space-2) 0;
+  }
+
+  .sidebar-status-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .sidebar-status-dot {
+    display: block;
   }
 
   .brand-lockup {

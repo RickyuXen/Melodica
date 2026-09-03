@@ -43,7 +43,7 @@ def _get_model():
     return _model
 
 
-app = FastAPI(title="Melodica Sidecar", version="0.1.0")
+app = FastAPI(title="Melodica Sidecar", version="1.0.0")
 
 
 class TranscribeRequest(BaseModel):

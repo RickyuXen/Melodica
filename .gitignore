@@ -23,7 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .cursor/*
+.impeccable/*
 todo.md
+docs/code-review.md
 
 # Rust / Tauri
 src-tauri/target
@@ -45,6 +47,7 @@ __pycache__/
 # Env
 .env
 .env.*
+!.env.example
 
 # Standalone app output (replaced on each `npm run dist`)
 release/

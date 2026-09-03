@@ -26,6 +26,9 @@ export type LyricLine = {
   source: string;
 };
 
+/** Loaded lyrics, or in-flight / error markers used by Home and Edit. */
+export type LyricsState = LyricLine[] | "loading" | "error" | undefined;
+
 export type WordGloss = {
   text: string;
   gloss: string;
@@ -33,6 +36,7 @@ export type WordGloss = {
 
 export type TranslateApiKeyStatus = {
   hasKey: boolean;
+  apiKey: string | null;
 };
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -65,17 +69,6 @@ export async function pickAudioFiles(): Promise<string[]> {
     return selected;
   }
   return [selected];
-}
-
-/** @deprecated Prefer pickAudioFiles; kept for single-path callers. */
-export async function pickAudioFile(): Promise<string | null> {
-  const paths = await pickAudioFiles();
-  return paths[0] ?? null;
-}
-
-/** Upserts one file and starts the upload auto-pipeline. */
-export async function processUpload(filePath: string): Promise<Track> {
-  return invoke<Track>("process_upload", { filePath });
 }
 
 /** Upserts many files and starts the upload auto-pipeline (batched translate). */
@@ -156,7 +149,7 @@ export async function processLyrics(
 }
 
 /** Set song language from Edit. Pass null/empty for auto-detect (preference only).
- *  Optional lrclibId re-runs select-time detect when choosing Auto. */
+ *  Auto re-detects from processed lyrics when present, else optional LRCLIB match. */
 export async function setTrackLanguage(
   trackId: number,
   languageCode?: string | null,
@@ -170,7 +163,7 @@ export async function setTrackLanguage(
   });
 }
 
-/** Select-time LRCLIB fetch + language detect. Does not persist lyrics. */
+/** Select-time language detect. Prefers processed lyrics; else LRCLIB match text. */
 export async function previewLrclibLanguage(
   trackId: number,
   lrclibId?: number | null,
@@ -275,7 +268,7 @@ export async function getTranslateApiKeyStatus(): Promise<TranslateApiKeyStatus>
   return invoke<TranslateApiKeyStatus>("get_translate_api_key_status");
 }
 
-/** Save or clear the Settings API key. Pass null/empty to clear (falls back to env). */
+/** Save or clear the Settings API key. Pass null/empty to clear. */
 export async function setTranslateApiKey(
   apiKey: string | null,
 ): Promise<TranslateApiKeyStatus> {
@@ -283,6 +276,12 @@ export async function setTranslateApiKey(
   return invoke<TranslateApiKeyStatus>("set_translate_api_key", {
     apiKey: trimmed ? trimmed : null,
   });
+}
+
+/** Open an http(s) URL in the system browser. */
+export async function openExternalUrl(url: string): Promise<void> {
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl(url);
 }
 
 export type PlaybackStatus = {

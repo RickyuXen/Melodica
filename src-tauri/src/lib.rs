@@ -9,6 +9,15 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, RunEvent, State};
 
+/// Load project `.env` for `tauri:dev` only. Release builds ignore `.env` / env keys.
+#[cfg(debug_assertions)]
+fn load_dev_dotenv() {
+    use std::path::Path;
+    let root_env = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.env");
+    let _ = dotenvy::from_path(root_env);
+    let _ = dotenvy::dotenv();
+}
+
 use playback::{PlaybackStatus, SharedPlayback};
 use storage::{LyricLine, Track};
 
@@ -26,17 +35,6 @@ fn app_info() -> AppInfo {
         name: env!("CARGO_PKG_NAME").to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     }
-}
-
-/// Accepts a local file path from the UI, saves track metadata, then runs the
-/// full auto-pipeline (lyrics + translation) in the background.
-#[tauri::command]
-fn process_upload(app: AppHandle, file_path: String) -> Result<Track, String> {
-    let tracks = pipeline::process_uploads(&app, vec![file_path])?;
-    tracks
-        .into_iter()
-        .next()
-        .ok_or_else(|| "Upload failed".to_string())
 }
 
 /// Accepts one or more local file paths; upserts each and runs the upload auto-pipeline.
@@ -76,8 +74,8 @@ fn process_lyrics(
 }
 
 /// Set or clear song language from Edit. Pass null/empty for auto-detect.
-/// Preference only (no translation). Optional lrclib_id re-runs select-time detect on Auto.
-/// Emits pipeline-finished/failed; Auto+match also emits language-preview-finished.
+/// Preference only (no translation). Auto re-detects from processed lyrics, else LRCLIB.
+/// Emits pipeline-finished/failed; Auto also emits language-preview-finished.
 #[tauri::command]
 fn set_track_language(
     app: AppHandle,
@@ -93,7 +91,8 @@ fn set_track_language(
     Ok(())
 }
 
-/// Select-time LRCLIB fetch + language detect (no lyrics persist). Soft-fails via events.
+/// Language detect for Edit: prefers processed lyrics, else LRCLIB match text.
+/// Soft-fails via events; does not persist lyrics.
 #[tauri::command]
 fn preview_lrclib_language(
     app: AppHandle,
@@ -136,25 +135,32 @@ fn reset_database(
 #[serde(rename_all = "camelCase")]
 pub struct TranslateApiKeyStatus {
     pub has_key: bool,
+    /// Stored key when present (local SQLite). Empty when cleared.
+    pub api_key: Option<String>,
 }
 
-/// Returns whether a Settings-stored translation API key exists (never the key).
-#[tauri::command]
-fn get_translate_api_key_status(app: AppHandle) -> Result<TranslateApiKeyStatus, String> {
-    let conn = storage::open(&app)?;
+fn translate_api_key_status(conn: &rusqlite::Connection) -> Result<TranslateApiKeyStatus, String> {
+    let api_key = storage::get_translate_api_key(conn)?;
     Ok(TranslateApiKeyStatus {
-        has_key: storage::get_translate_api_key(&conn)?.is_some(),
+        has_key: api_key.is_some(),
+        api_key,
     })
 }
 
-/// Save or clear the Settings translation API key (overrides MELODICA_TRANSLATE_API_KEY).
+/// Returns whether a Settings-stored translation API key exists, and the key itself.
+#[tauri::command]
+fn get_translate_api_key_status(app: AppHandle) -> Result<TranslateApiKeyStatus, String> {
+    let conn = storage::open(&app)?;
+    translate_api_key_status(&conn)
+}
+
+/// Save or clear the Settings translation API key (persisted in local SQLite).
+/// In release builds this is the only source; in debug, it overrides `.env` / env.
 #[tauri::command]
 fn set_translate_api_key(app: AppHandle, api_key: Option<String>) -> Result<TranslateApiKeyStatus, String> {
     let conn = storage::open(&app)?;
     storage::set_translate_api_key(&conn, api_key.as_deref())?;
-    Ok(TranslateApiKeyStatus {
-        has_key: storage::get_translate_api_key(&conn)?.is_some(),
-    })
+    translate_api_key_status(&conn)
 }
 
 #[tauri::command]
@@ -256,9 +262,13 @@ fn set_volume(engine: State<'_, SharedPlayback>, volume: f32) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(debug_assertions)]
+    load_dev_dotenv();
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(None) as SharedPlayback)
         .manage(sidecar::SidecarHandle(Mutex::new(None)))
         .setup(|app| {
@@ -269,7 +279,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
-            process_upload,
             process_uploads,
             search_lyrics,
             process_lyrics,

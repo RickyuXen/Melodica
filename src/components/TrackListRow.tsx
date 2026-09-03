@@ -1,8 +1,10 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { languageLabel } from "../lib/format";
 import type { SortDir, SortKey } from "../lib/trackList";
 
 type TrackListRowProps = {
+  id?: string;
   title: string;
   artist: string | null;
   languageCode: string | null;
@@ -11,10 +13,13 @@ type TrackListRowProps = {
   isPlaying?: boolean;
   isSearching?: boolean;
   isProcessing?: boolean;
+  tabIndex?: number;
   onClick: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
 };
 
 export function TrackListRow({
+  id,
   title,
   artist,
   languageCode,
@@ -23,7 +28,9 @@ export function TrackListRow({
   isPlaying = false,
   isSearching = false,
   isProcessing = false,
+  tabIndex,
   onClick,
+  onKeyDown,
 }: TrackListRowProps) {
   const languageContent = isSearching
     ? "Searching…"
@@ -35,12 +42,15 @@ export function TrackListRow({
 
   return (
     <button
+      id={id}
       type="button"
       role="option"
       aria-selected={isSelected}
       aria-busy={isSearching || isProcessing}
+      tabIndex={tabIndex}
       className={`edit-track-row${isSelected ? " is-selected" : ""}${isPlaying ? " is-playing" : ""}`}
       onClick={onClick}
+      onKeyDown={onKeyDown}
     >
       <span className="track-row-cells">
         <span className="track-cell track-cell-title" title={title}>

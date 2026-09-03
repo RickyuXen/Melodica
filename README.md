@@ -4,7 +4,7 @@ Downloadable desktop music player that helps you learn a language through music 
 
 DISCLAIMER: This will simply help with vocabulary, structure and complete meanings. Learning a language is difficult and many subtlties could and would be lost in translations. This program was designed to enjoy music while also properly learning a language.
 
-Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes: [`plan.md`](./plan.md). Pipeline flowchart: [`flow.md`](./flow.md).
+Product intent and constraints: [`docs/PRODUCT.md`](./docs/PRODUCT.md). Architecture notes: [`docs/plan.md`](./docs/plan.md). Pipeline flowchart: [`docs/flow.md`](./docs/flow.md).
 
 ## Layout
 
@@ -13,7 +13,7 @@ Product intent and constraints: [`PRODUCT.md`](./PRODUCT.md). Architecture notes
 | `src/` | React + TypeScript UI (Tauri webview) |
 | `src-tauri/` | Rust core — playback, tags, SQLite, LRCLIB, IPC |
 | `sidecar/` | Python FastAPI language service (Whisper ASR, translate-align) |
-| `docs/` | Glossary and ADRs |
+| `docs/` | Product docs, glossary, and ADRs |
 
 ## Prerequisites
 
@@ -35,18 +35,17 @@ Process translates non-English lyrics through Google’s **Gemini Flash** API (`
 
 ### Configure the key
 
-**Option A — Settings (recommended):** In Melodica, open **Settings → Translation API key**, paste the Gemini key, and click **Save key**. A Settings key **overrides** the environment variable.
+**Downloaded / release builds:** Open **Settings → Translation API key**, paste the Gemini key, and click **Save key**. Translation will not run without this.
 
-**Option B — Environment variable** (used when no Settings key is stored):
+**Development (`npm run tauri:dev`):** Either use Settings, or put the key in a project `.env` (see `.env.example`). The app loads `.env` automatically in debug builds. A Settings key overrides `.env`.
 
 ```bash
-export MELODICA_TRANSLATE_API_KEY="AIza..."
+# .env (dev only — never shipped with the app)
+MELODICA_TRANSLATE_API_KEY="AIza..."
 # optional overrides:
-export MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
-export MELODICA_TRANSLATE_MODEL="gemini-3.1-flash-lite"
+MELODICA_TRANSLATE_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+MELODICA_TRANSLATE_MODEL="gemini-3.1-flash-lite"
 ```
-
-Start `tauri:dev` / the sidecar in shells that inherit these variables if you rely on Option B.
 
 ## Run the desktop app
 
@@ -103,7 +102,7 @@ Bound to `127.0.0.1:8765`.
 - Light / dark theme and Melodica branding
 - Standalone desktop build (`npm run dist`) that packages the UI, Rust core, and language sidecar
 
-### Planned (source of truth: [`PRODUCT.md`](./PRODUCT.md))
+### Planned (source of truth: [`docs/PRODUCT.md`](./docs/PRODUCT.md))
 
 - Additional translation target languages beyond English
 - Offline / local LLM behind the same provider interface

@@ -350,7 +350,7 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     let cache = cache_dir.to_string_lossy().into_owned();
     let command = app
         .shell()
-        .sidecar("binaries/melodica-sidecar")
+        .sidecar("melodica-sidecar")
         .map_err(|e| format!("Sidecar binary missing: {e}"))?
         .env("MELODICA_MODEL_CACHE", cache);
 

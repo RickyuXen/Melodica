@@ -83,3 +83,19 @@ On Edit, when the user selects an LRCLIB matching song (including the duration-m
 ## Process (lyrics pipeline)
 
 Edit action that commits lyrics then translation: resolve source (paste > LRCLIB id > embedded tags > Whisper) → save originals to `lyrics_cache` → re-detect language when not manual → `translate-align` for non-English (soft-fail). Song language changes alone never Process. Upload uses **upload auto-pipeline** instead of requiring this button.
+
+## Pipeline core
+
+Deep Rust module (`src-tauri/src/pipeline/core.rs`) shared by upload auto-pipeline and Process: **persist lyrics → resolve language → translate**. Callers pass a language policy (`RespectManual` vs `ForceAutoDetect`) and choose `translate_one` (Edit) or `translate_batch` (upload). Source acquisition and event emission stay in the upload / Process adapters. Import’s early embedded write (`begin_upload`) stays outside this core.
+
+## Library session
+
+UI session hook (`useLibrarySession`): tracks list, lyrics cache, Home `openTrackId`, Edit `selectedEditTrackId`, refresh/upsert/load. Track-list search/sort/pane mode stays in Home/Edit (`useTrackListControls`), not here.
+
+## Pipeline session
+
+UI session hook (`usePipelineSession`): processing/phase/search/detecting state, `pipelineError`, upload/Process/search/language/preview commands, and Tauri pipeline/search/preview event subscriptions. Writes into the Library session on finish (upsert track, fill lyrics).
+
+## Playback session
+
+UI session hook (`usePlaybackSession`): playback status, scrub, volume, play/seek/next/prev. May patch `tracks.durationMs` on the Library session when the engine reports a duration (cross-session write used for duration match / UI).

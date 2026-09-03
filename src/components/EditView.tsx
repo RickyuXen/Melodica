@@ -1,10 +1,9 @@
-import type { Track } from "../lib/tauri";
+import type { LyricLine, Track } from "../lib/tauri";
 import type { TrackSearchState } from "./LyricsEditor";
 import { paneModeClass } from "../lib/trackList";
 import { useTrackListControls } from "../hooks/useTrackListControls";
-import { EditTrackPicker } from "./EditTrackPicker";
-import { TrackItem } from "./TrackItem";
-import type { LyricLine } from "../lib/tauri";
+import { LyricsEditor } from "./LyricsEditor";
+import { TrackList } from "./TrackList";
 
 type EditViewProps = {
   tracks: Track[];
@@ -65,7 +64,7 @@ export function EditView({
     <div className={paneModeClass("edit-split", paneMode)}>
       <div className="edit-split-picker track-list-pane">
         <h3 className="edit-split-heading">Tracks</h3>
-        <EditTrackPicker
+        <TrackList
           tracks={displayTracks}
           totalCount={tracks.length}
           selectedId={selectedEditTrackId}
@@ -75,6 +74,7 @@ export function EditView({
           sortDir={sortDir}
           searchQuery={searchQuery}
           paneMode={paneMode}
+          ariaLabel="Tracks to edit"
           onSearchChange={setSearchQuery}
           onPaneModeChange={setPaneMode}
           onSort={toggleSort}
@@ -83,8 +83,12 @@ export function EditView({
       </div>
       <div className="edit-split-editor">
         {selectedTrack ? (
-          <TrackItem
-            track={selectedTrack}
+          <LyricsEditor
+            trackId={selectedTrack.id}
+            trackTitle={selectedTrack.title}
+            trackArtist={selectedTrack.artist}
+            languageCode={selectedTrack.languageCode}
+            languageManual={selectedTrack.languageManual}
             lyrics={lyricsByTrack[selectedTrack.id]}
             isProcessing={processingIds.has(selectedTrack.id)}
             searchState={searchByTrack[selectedTrack.id]}
