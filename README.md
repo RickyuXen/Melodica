@@ -4,6 +4,8 @@ Downloadable desktop music player that helps you learn a language through music 
 
 DISCLAIMER: This will simply help with vocabulary, structure and complete meanings. Learning a language is difficult and many subtlties could and would be lost in translations. This program was designed to enjoy music while also properly learning a language.
 
+This project was created with the help of AI tools.
+
 Product intent and constraints: [`docs/PRODUCT.md`](./docs/PRODUCT.md). Architecture notes: [`docs/plan.md`](./docs/plan.md). Pipeline flowchart: [`docs/flow.md`](./docs/flow.md).
 
 ## Layout
